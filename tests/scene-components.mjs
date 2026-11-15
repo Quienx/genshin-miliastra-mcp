@@ -35,6 +35,13 @@ try{
   // Variables are added to the ones already there; a second call with the same name replaces that one only.
   made=addComponents({mapPath:made.mapPath,prefab:'t_coin',variables:[{name:'score',type:'integer',value:-3},{name:'extra',type:'integer'}]},workspace);
   assert.deepEqual(listComponents({mapPath:made.mapPath,prefab:'t_coin'}).found[0].variables.map(v=>v.name).sort(),['extra','label','on','ratio','score']);
+  // A list variable is byte for byte the one the editor saved in the official sample 玩法流程 (积分值列表, a list of integers).
+  const lists=addComponents({mapPath:made.mapPath,prefab:'t_coin',variables:[{name:'积分值列表',type:'integerList'},{name:'names',type:'stringList'}]},workspace);
+  const flow=path.join(root,'knowledge','samples','gil',fs.readdirSync(path.join(root,'knowledge','samples','gil')).find(f=>f.startsWith('mhqdyt95smtm_')));
+  const stored=file=>[4,5].flatMap(part=>messages(container(fs.readFileSync(file)),part)).flatMap(s=>messages(s,1)).flatMap(e=>[...messages(e,7),...messages(e,8)]).filter(r=>kind(r)===1).flatMap(r=>messages(r,11)).flatMap(b=>messages(b,1)).find(v=>messages(v,2)[0]?.toString('utf8')==='积分值列表');
+  assert.ok(stored(flow),'the official sample no longer holds the list 积分值列表');assert.ok(stored(lists.mapPath).equals(stored(flow)),'the integer list differs from the official one');
+  assert.deepEqual(listComponents({mapPath:lists.mapPath,prefab:'t_coin'}).found[0].variables.filter(v=>v.type.endsWith('List')),[{name:'积分值列表',type:'integerList'},{name:'names',type:'stringList'}]);
+  assert.throws(()=>addComponents({mapPath:made.mapPath,prefab:'t_coin',variables:[{name:'full',type:'integerList',value:3}]},workspace),/starts empty/);
 
   const first=addGraph({mapPath:made.mapPath,name:'coin_pick',attachToPrefab:'t_coin'},workspace),second=addGraph({mapPath:first.mapPath,name:'coin_more',attachToPrefab:'t_coin'},workspace);
   assert.deepEqual(listComponents({mapPath:second.mapPath,prefab:'t_coin'}).found[0].graphs,[first.graphId,second.graphId]);

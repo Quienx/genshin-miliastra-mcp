@@ -717,11 +717,15 @@ function tabContent({areas,options}){
       field(6,2,o.filterGraphId?Buffer.concat([field(1,0,1),field(2,0,o.filterGraphId)]):Buffer.alloc(0)),field(503,2,Buffer.from(o.text+'  序号: '+(i+1),'utf8')),field(504,0,13)]));
   })]);
 }
-const VARIABLE_TYPES={integer:3,boolean:4,float:5,string:6};
+// The list types are stored the same way: the official sample 玩法流程 holds an integer list (积分值列表) as
+// {3: 8, 4: {1: 8, 2: {1: 8, 2: {}}, 18: {}}, 5: 1, 6: {1: 8, 2: {}}}. Only an empty list has been seen in a save, so a
+// list starts empty and a graph fills it.
+const VARIABLE_TYPES={integer:3,boolean:4,float:5,string:6,integerList:8,booleanList:9,floatList:10,stringList:11};
 function variableBlock(v){
   const type=VARIABLE_TYPES[v.type];
-  if(!type||typeof v.name!=='string'||!v.name||v.name.length>40)fail('INVALID_VARIABLE','A variable is {name, type: integer | boolean | float | string, value}.',{variable:v});
+  if(!type||typeof v.name!=='string'||!v.name||v.name.length>40)fail('INVALID_VARIABLE','A variable is {name, type: '+Object.keys(VARIABLE_TYPES).join(' | ')+', value}.',{variable:v});
   let value=Buffer.alloc(0);const given=v.value;
+  if(type>6&&given!==undefined&&!(Array.isArray(given)&&!given.length))fail('INVALID_VARIABLE','A list variable starts empty: leave value out and fill the list from a graph (f.setCustomVariable).',{variable:v});
   if(type===3&&given!==undefined){if(!Number.isInteger(given)||Math.abs(given)>2147483647)fail('INVALID_VARIABLE','An integer variable takes a whole number within ±2147483647.',{variable:v});if(given)value=field(1,0,BigInt.asUintN(64,BigInt(given)));}
   else if(type===4&&given!==undefined){if(typeof given!=='boolean')fail('INVALID_VARIABLE','A boolean variable takes true or false.',{variable:v});if(given)value=field(1,0,1);}
   else if(type===5&&given!==undefined){if(!Number.isFinite(given))fail('INVALID_VARIABLE','A float variable takes a number.',{variable:v});if(given)value=field(1,5,f32(given));}
