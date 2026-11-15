@@ -1012,9 +1012,9 @@ export const extraCollisionContent=areas=>field(1,2,Buffer.concat([field(1,0,1),
 export const forceFieldContent=({areas,direction,innerRadius,outerRadius,innerSpeed,outerSpeed})=>Buffer.concat([field(1,2,Buffer.concat([field(1,0,1),...areas.map((a,n)=>field(2,2,areaBlock(a,n,'INVALID_FORCE_FIELD'))),field(3,0,1801),field(5,2,Buffer.alloc(0)),
   field(12,2,Buffer.concat([field(1,2,Buffer.alloc(0)),field(2,0,1811),field(3,2,xyz(direction)),field(5,5,f32(outerRadius)),field(6,5,f32(innerRadius)),field(7,5,f32(outerSpeed)),field(8,5,f32(innerSpeed)),field(501,0,1),field(502,0,1),field(503,0,1),field(504,0,1),field(505,5,f32(outerSpeed)),field(506,5,f32(innerSpeed)),field(507,0,1811)])),
   field(502,0,1),field(503,0,1),field(504,2,Buffer.from('角色扰动装置 序号：1','utf8'))])),field(2,0,1)]);
-export function addComponents({mapPath,prefab,entity,collisionTriggers,optionTab,variables,motions,follow,minimapMarker,textBubbles,nameplates,attachPoints,hurtBox,abilityUnits,loot,projectile,hitDetection,launcher,forceField,extraCollision,solid,outputName},workspace){
+export function addComponents({mapPath,prefab,entity,collisionTriggers,optionTab,variables,removeVariables,motions,follow,minimapMarker,textBubbles,nameplates,attachPoints,hurtBox,abilityUnits,loot,projectile,hitDetection,launcher,forceField,extraCollision,solid,outputName},workspace){
   const file=resolve(mapPath),bytes=fs.readFileSync(file);
-  if(collisionTriggers===undefined&&optionTab===undefined&&variables===undefined&&motions===undefined&&follow===undefined&&minimapMarker===undefined&&textBubbles===undefined&&nameplates===undefined&&attachPoints===undefined&&hurtBox===undefined&&abilityUnits===undefined&&loot===undefined&&projectile===undefined&&hitDetection===undefined&&launcher===undefined&&forceField===undefined&&extraCollision===undefined&&solid===undefined)fail('NOTHING_TO_ADD','Give collisionTriggers, optionTab, variables, motions, follow, minimapMarker, hurtBox, abilityUnits, launcher, forceField, extraCollision or solid.');
+  if(collisionTriggers===undefined&&optionTab===undefined&&variables===undefined&&removeVariables===undefined&&motions===undefined&&follow===undefined&&minimapMarker===undefined&&textBubbles===undefined&&nameplates===undefined&&attachPoints===undefined&&hurtBox===undefined&&abilityUnits===undefined&&loot===undefined&&projectile===undefined&&hitDetection===undefined&&launcher===undefined&&forceField===undefined&&extraCollision===undefined&&solid===undefined)fail('NOTHING_TO_ADD','Give collisionTriggers, optionTab, variables, motions, follow, minimapMarker, hurtBox, abilityUnits, launcher, forceField, extraCollision or solid.');
   if(variables){const names=variables.map(v=>v.name);if(new Set(names).size!==names.length)fail('INVALID_VARIABLE','Variable names must differ.',{names});}
   const triggers=collisionTriggers&&record(5,triggerContent(collisionTriggers)),tab=optionTab&&record(17,tabContent(optionTab)),added=variables?.map(variableBlock);
   const moving=motions&&record(4,motionContent(motions)),following=follow&&record(9,followContent(follow));
@@ -1064,10 +1064,11 @@ export function addComponents({mapPath,prefab,entity,collisionTriggers,optionTab
     if(flying)next=setBlock(next,layout.records,11,()=>flying);
     if(touching)next=setBlock(next,layout.records,12,()=>touching);
     if(able)next=setBlock(next,layout.properties,14,()=>able);
-    if(added)next=setBlock(next,layout.records,1,old=>{
-      // Variables already there stay unless one of the new ones has the same name.
-      const body=old&&fields(old).find(f=>f.id===11&&f.wire===2)?.data,kept=body?fields(body).filter(f=>f.id===1&&f.wire===2&&!variables.some(v=>v.name===fields(f.data).find(x=>x.id===2&&x.wire===2)?.data.toString('utf8'))).map(f=>f.raw):[];
-      return record(1,Buffer.concat([...kept,...added.map(b=>field(1,2,b))]));
+    if(added||removeVariables)next=setBlock(next,layout.records,1,old=>{
+      // Variables already there stay unless one of the new ones has the same name or removeVariables names it.
+      const gone=[...(variables??[]).map(v=>v.name),...(removeVariables??[])];
+      const body=old&&fields(old).find(f=>f.id===11&&f.wire===2)?.data,kept=body?fields(body).filter(f=>f.id===1&&f.wire===2&&!gone.includes(fields(f.data).find(x=>x.id===2&&x.wire===2)?.data.toString('utf8'))).map(f=>f.raw):[];
+      return record(1,Buffer.concat([...kept,...(added??[]).map(b=>field(1,2,b))]));
     });
     // Component 5 is the native collision: {1: 1, 2: 1} on a solid piece, empty on one that characters walk through
     // (official pickups such as coins have it empty).

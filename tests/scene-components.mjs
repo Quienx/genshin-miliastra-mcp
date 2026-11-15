@@ -42,6 +42,9 @@ try{
   assert.ok(stored(flow),'the official sample no longer holds the list 积分值列表');assert.ok(stored(lists.mapPath).equals(stored(flow)),'the integer list differs from the official one');
   assert.deepEqual(listComponents({mapPath:lists.mapPath,prefab:'t_coin'}).found[0].variables.filter(v=>v.type.endsWith('List')),[{name:'积分值列表',type:'integerList'},{name:'names',type:'stringList'}]);
   assert.throws(()=>addComponents({mapPath:made.mapPath,prefab:'t_coin',variables:[{name:'full',type:'integerList',value:3}]},workspace),/starts empty/);
+  // removeVariables takes the named ones off and leaves the rest, in one call with new ones too.
+  const fewer=addComponents({mapPath:lists.mapPath,prefab:'t_coin',removeVariables:['extra','积分值列表','never_there'],variables:[{name:'kept',type:'integer'}]},workspace);
+  assert.deepEqual(listComponents({mapPath:fewer.mapPath,prefab:'t_coin'}).found[0].variables.map(v=>v.name).sort(),['kept','label','names','on','ratio','score']);
 
   const first=addGraph({mapPath:made.mapPath,name:'coin_pick',attachToPrefab:'t_coin'},workspace),second=addGraph({mapPath:first.mapPath,name:'coin_more',attachToPrefab:'t_coin'},workspace);
   assert.deepEqual(listComponents({mapPath:second.mapPath,prefab:'t_coin'}).found[0].graphs,[first.graphId,second.graphId]);
