@@ -193,6 +193,7 @@
 - **碰撞触发器**（`scene_add_components` 的 `collisionTriggers`）：加在元件上，节点图运行时用 `createPrefab` 创建出来的每一个实体都带着它。角色走进去，挂在**同一个元件**上的图收到 `whenEnteringCollisionTrigger`（`evt.enteringEntity` 是进来的角色，`evt.triggerEntity` 是带触发器的实体自己）。工具写出的记录和官方教学存档里金币的记录逐字节相同。
 - **选项卡**（`optionTab`）：走进区域，屏幕上出现原生的“F”交互项；按 F 选中第一项，挂在同一个元件上的图收到 `whenTabIsSelected`（`evt.tabId` 从 1 开始，`evt.selectorEntity` 是操作的角色）。**账号是奇匠 Lv.1 时选项上不显示文字，只有图标**（官方教程注明“自定义文本外显”要达到一定奇匠等级），所以多个选项要用不同的 `icon` 区分。
 - **自定义变量**（`variables`）：加在玩家模板上（`prefab: "player"`）就是每个玩家各一份。别的实体上的图用 `f.getCustomVariable(player,'score').asType('int')` 读、`f.setCustomVariable(player,'score',值,true)` 写。
+- **列表自定义变量可以放在模板上，界面脚本读得到（2026-11-15 试玩成立）。** `scene_add_components` 的 `variables` 类型可以是 `integerList`、`booleanList`、`floatList`、`stringList`（初值为空，由节点图用 `f.setCustomVariable` 填；记录和官方样例“玩法流程”里的整数列表逐字节相同）。脚本里 `game.GetGlobalCustomVariableValue` 读到的是从 1 开始的 Lua 表。节点图就地改列表（`f.modifyValueInList`）不触发变化（官方自定义变量页），界面收不到；改完用 `f.setCustomVariable(实体,'名字',同一个列表,true)` 把列表对自己再设一次，界面就收到了。两个列表一先一后到达：脚本如果每个变化都重画，会画出“只到了一半”的一瞬间。不用的变量用 `removeVariables: [名字]` 去掉。实测关卡：背包和仓库窗口原来读 64 个逐格变量，改读四个列表后玩家模板的变量从 98 个降到 38 个，仓库图从 934 个节点（编辑器计数 1133）降到 692（891）。
 - **“自定义变量变化时”按类型区分**：`whenCustomVariableChanges` 编译出来的节点带类型，只收该类型变量的变化。源码里必须把变化值按变量的真实类型读一次（整数变量写 `evt.postChangeValue.asType('int')`），否则编译器默认成字符串版，整数变量怎么改都收不到事件，也不报错。
 - **节点图可以挂在元件、玩家模板、角色模板上**（`scene_add_graph` 的 `attachToPrefab`），一个实体可以挂多张图。挂在元件上的图，每个创建出来的实体各跑一份，事件只发给自己。
 - **物件被 `destroyEntity` 销毁，只有关卡实体上的图收到 `whenEntityIsDestroyed`**（官方文档的说法，实测一致：五枚币销毁，关卡图收到五次）。
