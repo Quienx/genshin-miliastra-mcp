@@ -8,6 +8,7 @@ import {animationsOf,animationsMayGoOn} from './scene/media.mjs';
 import {fail} from './adapter.mjs';
 import {checkClient,luaSyntaxError} from './client-check.mjs';
 import {imageIdKnown} from './scene/images.mjs';
+import {makeCompositeNode} from './scene/composite-make.mjs';
 import {SHAPES,EMPTY_MODEL,shapeOf,colorRecord,parseColor} from './scene/shapes.mjs';
 import {render as renderShapes} from './scene/shape-render.mjs';
 
@@ -1670,6 +1671,19 @@ export function listSignals({mapPath}){
   const state=signalState(container(fs.readFileSync(file))),parameters=Object.fromEntries(state.names.map((n,i)=>[n,state.carried[i]]).filter(([,list])=>list?.length));
   return {mapPath:file,signals:state.names,...(Object.keys(parameters).length?{parameters}:{}),
     note:'A server graph sends one with f.sendSignal(\'name\') and hears it with .onSignal(\'name\', (evt, f) => {...}) on any entity; every graph that listens runs.'};
+}
+// A composite node (复合节点) made of a graph of the save, as the editor makes one of selected nodes (生成复合节点):
+// scene/composite-make.mjs says what is written and which nodes of the graph become the node. The types of its pins
+// are written as a signal's are (a definition of a signal and one of a composite node store a pin's type alike).
+export function addCompositeNode({mapPath,graphId,name,description,outside,outputName},workspace){
+  const file=resolve(mapPath),bytes=fs.readFileSync(file),root=container(bytes);
+  if(fields(root).filter(f=>f.id===10&&f.wire===2).length!==1)fail('UNSUPPORTED_SAVE','The save does not have the node graph section this tool knows.');
+  const codes=new Map(Object.entries(SIGNAL_TYPES).map(([type,t])=>[t.server,type]));
+  const made=makeCompositeNode(one(root,10),{graphId,name,description,outside},code=>codes.has(code)?signalType(codes.get(code),'server'):null,fail);
+  const out=output(workspace,file,outputName,'-composite');fs.writeFileSync(out,wrap(bytes,replace(root,10,2,made.section)));
+  const call="f.sendSignal('composite:"+name+"'"+made.report.inputs.map(p=>', <'+p.name+'>').join('')+')';
+  return {mapPath:out,source:file,...made.report,
+    next:'Use mapPath in later calls. A graph calls the node with '+call+', the inputs in this order'+(made.report.outputs.length?", and reads what it gives with f.getCustomVariable(<any entity>, 'composite:"+name+":0').asType(<the type>) written after the call":'')+(made.report.flowOut?'':'. The node has no flow out: a graph that calls it stops there (end the body with a printString)')+'. '+(made.report.replaced?'The node was there and is made again in place: graphs that call it stay as they are while its inputs and outputs are the same.':'The node is written by this tool, not by the editor: open the save in the editor and play it before building on it.')};
 }
 export function addSignal({mapPath,name,parameter,parameters,outputName},workspace){
   const file=resolve(mapPath),bytes=fs.readFileSync(file);let root=container(bytes);

@@ -44,6 +44,7 @@
     "test:environment": "node tests/scene-environment.mjs",
     "test:class": "node tests/scene-class.mjs",
     "test:signal": "node tests/scene-signal.mjs",
+    "test:composite": "node tests/scene-composite.mjs",
     "test:points": "node tests/scene-points.mjs",
     "test:guide": "node tests/workflow-guide.mjs",
     "test:count": "node tests/editor-count.mjs",

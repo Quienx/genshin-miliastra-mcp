@@ -123,6 +123,9 @@ playtest_status gives the outcome.
      loot (what it leaves behind when destroyed), and projectile with hitDetection (a bullet: it flies from the moment
      f.createProjectile makes it and strikes what it touches; examples/shoot).
    scene_list_components shows what a prefab carries.
+   scene_add_composite_node: logic that many graphs repeat (take N of an item, count what is held) written once,
+     as a graph, and made into ONE node the others call with f.sendSignal('composite:NAME', ...): it counts as one
+     node against each caller's limit of 3000. The tool's description says the shape the graph has to have.
    scene_add_signal: a level-wide broadcast, f.sendSignal('name') in one graph and .onSignal('name', ...) in any
      number of others: dawn, "the wall fell", "round over". Use it instead of one graph reaching into many entities.
      It carries values when defined with parameters (integers, floats, strings, vectors, entities, lists ...); the
