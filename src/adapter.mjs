@@ -103,10 +103,39 @@ export function toClientScriptSignals(gilBytes,giaBytes){
   header.writeUInt32BE(payload.length+20,0);header.writeUInt32BE(payload.length,16);
   return Buffer.concat([header,payload,giaBytes.subarray(-4)]);
 }
+// A call to a composite node (复合节点) that the save already has. The compiler has no node for one, but in a graph a
+// composite node is a node like the send node of a signal: the definition's id, then its data pins in order, each
+// naming its pin of the definition (compositePinIndex), and the flow out naming the definition's (read from a node a
+// creator placed by wrapping part of a graph, 2026-11-15). So a graph writes f.sendSignal('composite:NAME', ...inputs)
+// and here, before the graph goes into the save, such a node becomes the composite node NAME of that save: its id,
+// no pin for a name, and the pins numbered as the definition has them. What the composite node gives out is not
+// reachable this way (a send has no outputs): only its inputs and its flow.
+const COMPOSITE_CALL=/^composite:/;
+export function toCompositeNodes(gilBytes,giaBytes){
+  const {rootMessage}=loadGiaProto(),root=rootMessage.decode(giaBytes.subarray(20,giaBytes.length-4)),graph=root?.graph?.graph?.inner?.graph;
+  const named=(graph?.nodes??[]).filter(n=>n.genericId?.nodeId===300000).map(n=>({node:n,text:(n.pins??[]).filter(p=>p?.i1?.kind===5).map(p=>textOf(p.value)).find(Boolean)})).filter(x=>x.text&&COMPOSITE_CALL.test(x.text.val));
+  if(!named.length)return giaBytes;
+  const known=inspectCompositeNodes(gilBytes.subarray(20,-4));
+  for(const {node,text} of named){
+    const name=text.val.replace(COMPOSITE_CALL,''),found=known.filter(c=>c.name===name),[def]=found;
+    if(found.length!==1)fail(found.length?'COMPOSITE_NODE_AMBIGUOUS':'COMPOSITE_NODE_NOT_FOUND',found.length?'The save has several composite nodes of this name: give them different names in the editor.':'The save has no composite node of this name. A composite node is made in the editor (select the nodes of a graph, 生成复合节点) and saved; inspect_map lists those a save has.',{compositeNode:name,calledAs:text.val,compositeNodes:known.map(c=>c.name)});
+    const inputs=(node.pins??[]).filter(p=>p?.i1?.kind===3).sort((a,b)=>(a.i1.index||0)-(b.i1.index||0));
+    if(inputs.length!==def.inputs.length||inputs.some((p,i)=>(p.i1.index||0)!==i))fail('COMPOSITE_NODE_INPUTS','The call gives '+inputs.length+' input(s) and the composite node takes '+def.inputs.length+': f.sendSignal(\'composite:'+name+'\''+def.inputs.map(p=>', '+(p.name||'input')).join('')+').',{compositeNode:name,inputs:def.inputs.map(p=>({name:p.name,type:p.type}))});
+    if(def.inflows.length!==1||def.outflows.length>1)fail('COMPOSITE_NODE_FLOW','Only a composite node with one flow in and at most one flow out can be called from a graph\'s source.',{compositeNode:name,inflows:def.inflows.length,outflows:def.outflows.length});
+    const id={class:10001,type:20000,kind:22001,nodeId:def.definitionId};
+    node.genericId=id;node.concreteId={...id};
+    node.pins=(node.pins??[]).filter(p=>p?.i1?.kind!==5);
+    inputs.forEach((p,i)=>{p.compositePinIndex=def.inputs[i].pinIndex;});
+    for(const p of node.pins)if(p?.i1?.kind===2&&def.outflows.length)p.compositePinIndex=def.outflows[0].pinIndex;
+  }
+  const payload=Buffer.from(rootMessage.encode(root).finish()),header=Buffer.from(giaBytes.subarray(0,20));
+  header.writeUInt32BE(payload.length+20,0);header.writeUInt32BE(payload.length,16);
+  return Buffer.concat([header,payload,giaBytes.subarray(-4)]);
+}
 function listedSignals(gilBytes){const payload=gilBytes.subarray(20,-4),found=[];parseMessage(payload,0,payload.length,0,0,0,0,0,0,0,found);return [...buildSignalNodeIdMapFromFields(payload,found).keys()];}
 export function inject(bytes, giaBytes, targetId) {
   // Keep upstream non-empty target checks enabled; never patch arbitrary binary fields.
-  const result=createInjector({lang:'en-US'}).injectBytes({gilBytes:bytes,giaBytes:toClientScriptSignals(bytes,giaBytes),targetId});
+  const result=createInjector({lang:'en-US'}).injectBytes({gilBytes:bytes,giaBytes:toCompositeNodes(bytes,toClientScriptSignals(bytes,giaBytes)),targetId});
   inspectBytes(result.bytes);
   return Buffer.from(result.bytes);
 }

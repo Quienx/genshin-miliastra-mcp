@@ -1599,6 +1599,7 @@ export function signalDeclarationFaults({mapPath,code}){
   // Comments are not code: a declaration quoted in one is not looked at.
   code=code.replace(/\/\*[\s\S]*?\*\//g,' ').replace(/(^|[^:'"`\\])\/\/[^\n]*/g,'$1');
   for(const m of code.matchAll(/defineSignal\s*\(\s*(['"])([^'"]+)\1\s*,\s*\[([\s\S]*?)\]\s*(?:as\s+const\s*)?\)/g)){
+    if(/^composite:/.test(m[2]))continue;        // a call to a composite node, not a signal: checked against the node when the graph is written
     const toScripts=/^client:/.test(m[2]),name=m[2].replace(/^client:/,''),declared=[...m[3].matchAll(/\[\s*(['"])([^'"]*)\1\s*,\s*(['"])([^'"]*)\3\s*\]/g)].map(x=>({name:x[2],type:x[4]}));
     have??=listSignals({mapPath});
     if(!have.signals.includes(name)){faults.push({signal:m[2],problem:'The save has no signal "'+name+'": scene_add_signal defines it.',signals:have.signals});continue;}
