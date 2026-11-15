@@ -83,3 +83,4 @@
 - `mcp_round.mjs` 又加的参数：`statuses`（一组 `scene_add_unit_status` 的参数）、`environments`（一组 `scene_add_environment` 的参数），它们的编号以 `status:<名字>`、`environment:<名字>`、`environment:default` 交给生成脚本；`graphs` 里的图可以带 `kind`（客户端图），组件里选项的 `filterGraph: "<图的 key>"` 会换成那张过滤器图的编号。环境变量 `ROUND_DRY=1` 是演练：不打开编辑器、不导入场景、不试玩，其余步骤照常，用来在不开游戏时把整轮的参数错误先抓出来。
 - `examples/checks`：验证关卡，把离线写的工具放在一轮里实机检查（跟随的金币、靠近时描边的路牌和小地图标识、带过滤器的选项、会升起的门、夜晚环境）。跑法和别的样例一样：`ROUND_ARGS` 指向 `examples\checks\checks_test.json`，跑 `mcp_round.mjs`。
 - `graph_headers.mjs <存档.gil>`：列出每张节点图的类型、编号和资源库登记；`f100.mjs`：看客户端图的标记字段和空图的样子；`sec_line.mjs <存档.gil> <段号>`：把某一段压成一行一条记录。
+- `composite_fixture.mjs <小存档.gil> <含复合节点的存档.gil> <输出.gil>`（2026-11-15）：把一份存档里的复合节点（定义、内部图）和用到它们的图抄进一份小存档的第 10 段，给 `inspect_map` 的测试用（`tests/fixtures/composite-node-spliced.gil`）。拼出来的存档只用来读，不要导入游戏。

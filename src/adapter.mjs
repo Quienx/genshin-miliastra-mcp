@@ -13,6 +13,7 @@ import { inspectUIConfigurations } from './scene/ui-config.mjs';
 import {signalDefinitionFingerprints,clientScriptSignalHeads} from './scene/signal-definitions.mjs';
 import {inspectSignalContract} from './scene/signal-contract.mjs';
 import {inspectPrefabs} from './scene/prefabs.mjs';
+import {inspectCompositeNodes} from './scene/composite-nodes.mjs';
 
 export const packageRoot = path.dirname(fileURLToPath(import.meta.resolve('genshin-ts/package.json')));
 export const sha = value => createHash('sha256').update(value).digest('hex');
@@ -59,13 +60,17 @@ export function inspectBytes(bytes) {
   const definitionFingerprints=signalDefinitionFingerprints(payload,fields,signals);
   for(const signal of signals){signal.definitionFingerprints=definitionFingerprints.get(signal.name);signal.parameterContract=inspectSignalContract(signal);}
   const {nodeGraphMessage}=loadGiaProto();
+  // Composite nodes (复合节点) and, on each graph, the nodes that are one: by the definition's id.
+  const compositeNodes=inspectCompositeNodes(payload,graph=>graphEditorCount(graph).total),composite=new Map(compositeNodes.map(c=>[c.definitionId,c]));
   const graphs=[...buildNodeGraphFieldIndex(payload,fields)].flatMap(([id,matches])=>matches.map(m=>{
     const obj=nodeGraphMessage.decode(payload.subarray(m.field.dataStart,m.field.dataEnd));
+    const compositeNodeRefs=(obj.nodes??[]).flatMap(node=>{const used=composite.get(Number(String(node.genericId?.nodeId??0)));if(!used)return [];
+      used.usedBy.push({graphId:id,graphName:obj.name||'',nodeIndex:node.nodeIndex});return [{nodeIndex:node.nodeIndex,definitionId:used.definitionId,name:used.name}];});
     const signalReferences=(obj.nodes??[]).flatMap(node=>signals.flatMap(signal=>Object.entries(signal.nodeIds).filter(([,target])=>['class','type','kind','nodeId'].every(k=>node.genericId?.[k]===target[k])).map(([role,target])=>({name:signal.name,role,nodeIndex:node.nodeIndex,nodeId:target.nodeId,signalVersion:node.signalVersion??null,resolution:'observed-definition-id-match',gameplay:'not_run'}))));
     return {id,name:obj.name||'',type:m.type,nodeCount:obj.nodes?.length||0,editorCount:graphEditorCount(obj).total,nodePayloadHash:graphNodePayloadHash(obj,nodeGraphMessage),topology:graphTopology(obj,nodeGraphMessage),signalReferences,
-      writable:isNodeGraphEmptyForInjection(obj)||(obj.name||'').startsWith('_GSTS')};
+      ...(compositeNodeRefs.length?{compositeNodeRefs}:{}),writable:isNodeGraphEmptyForInjection(obj)||(obj.name||'').startsWith('_GSTS')};
   }));
-  return {bytes:bytes.length,sha256:sha(bytes),schema:readUint32BE(bytes,4),graphs,signals,prefabTemplates:inspectPrefabs(payload),battleConfigurations:inspectBattleConfigurations(payload),uiConfigurations:inspectUIConfigurations(payload),signalInspection:{scope:'Pinned backend signal definition node IDs and matching graph references; parameter schema and runtime not verified'},entities:inspectEntities(payload),
+  return {bytes:bytes.length,sha256:sha(bytes),schema:readUint32BE(bytes,4),graphs,compositeNodes,signals,prefabTemplates:inspectPrefabs(payload),battleConfigurations:inspectBattleConfigurations(payload),uiConfigurations:inspectUIConfigurations(payload),signalInspection:{scope:'Pinned backend signal definition node IDs and matching graph references; parameter schema and runtime not verified'},entities:inspectEntities(payload),
     warnings:graphs.length?[]:[{code:'MISSING_GRAPH',message:'Create and save a server entity node graph named _GSTS_MCP_Test in the editor, and attach it to the stage entity.'}]};
 }
 export function inspectFile(file) { return {path:file,modifiedAt:fs.statSync(file).mtime.toISOString(),...inspectBytes(fs.readFileSync(file))}; }
