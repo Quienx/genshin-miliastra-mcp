@@ -108,14 +108,20 @@ export function toClientScriptSignals(gilBytes,giaBytes){
 // naming its pin of the definition (compositePinIndex), and the flow out naming the definition's (read from a node a
 // creator placed by wrapping part of a graph, 2026-11-15). So a graph writes f.sendSignal('composite:NAME', ...inputs)
 // and here, before the graph goes into the save, such a node becomes the composite node NAME of that save: its id,
-// no pin for a name, and the pins numbered as the definition has them. What the composite node gives out is not
-// reachable this way (a send has no outputs): only its inputs and its flow.
-const COMPOSITE_CALL=/^composite:/;
+// no pin for a name, and the pins numbered as the definition has them.
+// What the composite node gives out: a send has no outputs, so the graph reads an output with a stand-in that the
+// compiler can type, f.getCustomVariable(anyEntity, 'composite:NAME:K').asType(...), K the output's place from 0,
+// written AFTER the call it reads (it reads the last call of NAME before it). In a save a node that uses a composite
+// node's output is simply connected to that node's output K, with nothing else stored (read from a composite node
+// with an output that a creator made, 2026-11-15); so here every such connection is turned to the call's node and
+// the stand-in is taken out. Its type must be the output's.
+const COMPOSITE_CALL=/^composite:/,COMPOSITE_OUTPUT=/^composite:(.+):(\d+)$/,GET_CUSTOM_VARIABLE=50;
 export function toCompositeNodes(gilBytes,giaBytes){
   const {rootMessage}=loadGiaProto(),root=rootMessage.decode(giaBytes.subarray(20,giaBytes.length-4)),graph=root?.graph?.graph?.inner?.graph;
   const named=(graph?.nodes??[]).filter(n=>n.genericId?.nodeId===300000).map(n=>({node:n,text:(n.pins??[]).filter(p=>p?.i1?.kind===5).map(p=>textOf(p.value)).find(Boolean)})).filter(x=>x.text&&COMPOSITE_CALL.test(x.text.val));
-  if(!named.length)return giaBytes;
-  const known=inspectCompositeNodes(gilBytes.subarray(20,-4));
+  const reads=(graph?.nodes??[]).filter(n=>n.genericId?.nodeId===GET_CUSTOM_VARIABLE).map(n=>({node:n,match:COMPOSITE_OUTPUT.exec((n.pins??[]).filter(p=>p?.i1?.kind===3&&(p.i1.index||0)===1).map(p=>textOf(p.value)).find(Boolean)?.val??'')})).filter(x=>x.match);
+  if(!named.length&&!reads.length)return giaBytes;
+  const known=inspectCompositeNodes(gilBytes.subarray(20,-4)),calls=[];
   for(const {node,text} of named){
     const name=text.val.replace(COMPOSITE_CALL,''),found=known.filter(c=>c.name===name),[def]=found;
     if(found.length!==1)fail(found.length?'COMPOSITE_NODE_AMBIGUOUS':'COMPOSITE_NODE_NOT_FOUND',found.length?'The save has several composite nodes of this name: give them different names in the editor.':'The save has no composite node of this name. A composite node is made in the editor (select the nodes of a graph, 生成复合节点) and saved; inspect_map lists those a save has.',{compositeNode:name,calledAs:text.val,compositeNodes:known.map(c=>c.name)});
@@ -127,7 +133,20 @@ export function toCompositeNodes(gilBytes,giaBytes){
     node.pins=(node.pins??[]).filter(p=>p?.i1?.kind!==5);
     inputs.forEach((p,i)=>{p.compositePinIndex=def.inputs[i].pinIndex;});
     for(const p of node.pins)if(p?.i1?.kind===2&&def.outflows.length)p.compositePinIndex=def.outflows[0].pinIndex;
+    calls.push({node,name,def});
   }
+  const types=loadGiaProto().root.lookupEnum('VarType').values;
+  for(const {node,match:[,name,place]} of reads){
+    const call=calls.filter(c=>c.name===name&&c.node.nodeIndex<node.nodeIndex).sort((a,b)=>b.node.nodeIndex-a.node.nodeIndex)[0],output=call?.def.outputs[Number(place)],made=(node.pins??[]).find(p=>p?.i1?.kind===4)?.type;
+    const read="f.getCustomVariable(entity, 'composite:"+name+':'+place+"')";
+    if(!call)fail('COMPOSITE_NODE_OUTPUT','An output of a composite node is read after the call that makes it: write f.sendSignal(\'composite:'+name+'\', ...) first, then '+read+'.',{compositeNode:name,output:Number(place)});
+    if(!output)fail('COMPOSITE_NODE_OUTPUT','The composite node has '+call.def.outputs.length+' output(s), counted from 0.',{compositeNode:name,output:Number(place),outputs:call.def.outputs.map(o=>o.name||'output')});
+    if(made!==types[output.type?.type1])fail('COMPOSITE_NODE_OUTPUT','The output is of another type than the source reads it as: give .asType() the output\'s type.',{compositeNode:name,output:Number(place),type:output.type?.type1??null});
+    for(const other of graph.nodes)for(const pin of other.pins??[])for(const wire of pin.connects??[])if(wire.id===node.nodeIndex&&wire.connect?.kind===4){
+      wire.id=call.node.nodeIndex;wire.connect.index=Number(place);if(wire.connect2)wire.connect2.index=Number(place);
+    }
+  }
+  if(reads.length)graph.nodes=graph.nodes.filter(n=>!reads.some(r=>r.node===n));
   const payload=Buffer.from(rootMessage.encode(root).finish()),header=Buffer.from(giaBytes.subarray(0,20));
   header.writeUInt32BE(payload.length+20,0);header.writeUInt32BE(payload.length,16);
   return Buffer.concat([header,payload,giaBytes.subarray(-4)]);

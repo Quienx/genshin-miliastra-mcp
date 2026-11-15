@@ -87,3 +87,57 @@ test('a call is refused when the save has no such composite node or the inputs d
   assert.ok(toCompositeNodes(save,plain).equals(plain));
 });
 
+// composite-output-spliced.gil: the same small save with the records of a second composite node, "SSCountHeld", which
+// a creator made on 2026-11-15 out of a block that counts how many of an item a player holds: two inputs (an entity,
+// a text) and ONE OUTPUT (a whole number), a list loop and a local variable inside. composite-output-call.gia: what
+// the compiler makes of a graph that calls it twice and reads its output through the stand-in the tool asks for:
+//   .on('whenEntityIsCreated',(evt,f)=>{
+//     f.printString('before');
+//     f.sendSignal('composite:SSCountHeld',evt.eventSourceEntity,'wood');
+//     f.printString(f.dataTypeConversion(f.getCustomVariable(evt.eventSourceEntity,'composite:SSCountHeld:0').asType('int'),'str'));
+//     f.sendSignal('composite:SSCountHeld',evt.eventSourceEntity,'stone');
+//     f.printString(f.dataTypeConversion(f.getCustomVariable(evt.eventSourceEntity,'composite:SSCountHeld:0').asType('int')+1n,'str'));
+//   })
+// (On an event that needs no signal of the save; the graph's id is that of the fixture's graph it is written in place of.)
+test('a composite node made with an output lists it, and the graph that uses it is connected to the node itself',()=>{
+  const save=inspectBytes(fixture('composite-output-spliced.gil')),node=save.compositeNodes.find(c=>c.name==='SSCountHeld');
+  assert.deepEqual(node.inputs.map(p=>p.type.type1),['Entity','String']);
+  assert.deepEqual(node.outputs.map(p=>[p.name,p.type.type1]),[['Value','Integer']]);
+  assert.deepEqual(node.usedBy.map(u=>u.graphName),['_GSTS_SsCountHeld']);
+});
+
+test('a read of composite:NAME:K after the call becomes a connection to the composite node\'s output K',()=>{
+  const save=fixture('composite-output-spliced.gil'),def=inspectBytes(save).compositeNodes.find(c=>c.name==='SSCountHeld');
+  const before=graphOf(fixture('composite-output-call.gia'));
+  assert.equal(before.nodes.filter(n=>n.genericId.nodeId===50).length,2,'two stand-ins as the compiler wrote them');
+  const graph=graphOf(toCompositeNodes(save,fixture('composite-output-call.gia'))),at=index=>graph.nodes.find(n=>n.nodeIndex===index);
+  assert.equal(graph.nodes.length,before.nodes.length-2);
+  assert.ok(!graph.nodes.some(n=>n.genericId.nodeId===50||n.genericId.nodeId===300000),'no stand-in and no send is left');
+  const calls=graph.nodes.filter(n=>String(n.genericId.nodeId)===String(def.definitionId)).map(n=>n.nodeIndex);
+  assert.deepEqual(calls,[3,7]);
+  // Each reader is connected to the call that came last before its stand-in: the first to node 3, the second to node 7.
+  const reads=index=>at(index).pins.flatMap(p=>(p.connects??[]).filter(c=>c.connect.kind==='OutParam').map(c=>[c.id,c.connect.index??0,c.connect2?.index??0]));
+  assert.deepEqual(reads(5),[[3,0,0]]);
+  assert.deepEqual(reads(9),[[7,0,0]]);
+  // The node itself carries no pin for its output, as the one a creator placed carries none.
+  assert.ok(at(3).pins.every(p=>p.i1.kind!=='OutParam'));
+  // And the whole goes into the save: the graph is listed as a user of the node, twice.
+  const written=inspectBytes(inject(save,fixture('composite-output-call.gia'),1073741869));
+  assert.deepEqual(written.compositeNodes.find(c=>c.name==='SSCountHeld').usedBy.map(u=>u.nodeIndex),[3,7]);
+});
+
+test('a read of an output that is not there, of another type, or before any call is refused',()=>{
+  const save=fixture('composite-output-spliced.gil'),gia=fixture('composite-output-call.gia');
+  const name=node=>node.pins.find(p=>p.i1.kind===3&&p.i1.index===1).value.bString;
+  refused('COMPOSITE_NODE_OUTPUT',()=>toCompositeNodes(save,changed(gia,graph=>{name(graph.nodes.find(n=>n.nodeIndex===4)).val='composite:SSCountHeld:1';})));
+  refused('COMPOSITE_NODE_OUTPUT',()=>toCompositeNodes(save,changed(gia,graph=>{graph.nodes.find(n=>n.nodeIndex===4).pins.find(p=>p.i1.kind===4).type=6;})));
+  // The first stand-in numbered before the first call: nothing has made the value yet.
+  refused('COMPOSITE_NODE_OUTPUT',()=>toCompositeNodes(save,changed(gia,graph=>{
+    const stand=graph.nodes.find(n=>n.nodeIndex===4);
+    for(const node of graph.nodes)for(const pin of node.pins??[])for(const wire of pin.connects??[])if(wire.id===4)wire.id=0;
+    stand.nodeIndex=0;
+  })));
+  // A stand-in for a node the save does not have at all is refused as the call would be.
+  refused('COMPOSITE_NODE_OUTPUT',()=>toCompositeNodes(save,changed(gia,graph=>{name(graph.nodes.find(n=>n.nodeIndex===4)).val='composite:Nothing:0';})));
+});
+
