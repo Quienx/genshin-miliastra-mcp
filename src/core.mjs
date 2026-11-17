@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { sha, fail, packageRoot, inspectBytes, inspectFile, inspectGia, inject } from './adapter.mjs';
 import { inspectEditorConnection } from './editor-connection.mjs';
+import { readGraph } from './scene/graph-read.mjs';
 import { inspectCompiledAssetText } from './compiled-text-check.mjs';
 
 export const ROOT=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
@@ -115,6 +116,7 @@ export class Service {
     return {maps,...(twice.length?{note:'Several saves share a name ('+twice.slice(0,5).join(', ')+'): sameName on each says how many. When a save is meant by its name alone, ask which one, or take the newest and say so.'}:{})};
   }
   inspectMap({mapPath}) {return inspectFile(this.assertRead(mapPath));}
+  readGraph({mapPath,graphId,name}) {return readGraph(fs.readFileSync(this.assertRead(mapPath)),{graphId,name});}
   createProject({projectId,mapPath,targetGraphId}) {
     const dir=this.project(projectId);if(exists(dir))fail('PROJECT_EXISTS','Choose another project ID.');
     const source=this.assertRead(mapPath),bytes=fs.readFileSync(source),info=inspectBytes(bytes);

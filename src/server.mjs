@@ -22,7 +22,7 @@ playtest_status gives the outcome.
    not one big graph polling the scene.
 
 1. Look at what is there.
-   list_maps, inspect_map (node graphs and their ids), scene_list_entities, scene_list_prefabs, scene_list_factions,
+   list_maps, inspect_map (node graphs and their ids), read_graph (one graph node by node, with its values), scene_list_entities, scene_list_prefabs, scene_list_factions,
    scene_get_level_settings, scene_list_cameras.
    A brand-new map works too (verified on a blank map, scripts/dev/fresh_map_round.mjs): the creator makes the save
    in the game (我的奇域 → 新建存档), changes anything and saves once so that the file is written.
