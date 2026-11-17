@@ -9,6 +9,7 @@ import {fail} from './adapter.mjs';
 import {checkClient,luaSyntaxError} from './client-check.mjs';
 import {imageIdKnown} from './scene/images.mjs';
 import {makeCompositeNode} from './scene/composite-make.mjs';
+import {makeStruct,inspectStructs} from './scene/struct-make.mjs';
 import {SHAPES,EMPTY_MODEL,shapeOf,colorRecord,parseColor} from './scene/shapes.mjs';
 import {render as renderShapes} from './scene/shape-render.mjs';
 
@@ -1221,9 +1222,9 @@ export function addCardSelector({mapPath,name,title,cards,seconds=30,warnSeconds
 }
 // Adds a custom control to the screen: its template, the copy in the control library and the copy in the layout, and
 // registers them (root list, the library's children, the layout's children).
-function placeControl(root,records,layout,library,spec){
+function placeControl(root,records,layout,library,spec,build=barRecord){
   const next=Math.max(...records.map(r=>r.id))+1,templateId=next,libraryId=next+1,controlId=next+2,slot=Math.max(0,...records.map(r=>r.slot))+1,common={...spec,slot};
-  const fresh=[barRecord({...common,id:templateId,copies:[libraryId,controlId]}),barRecord({...common,id:libraryId,templateId,parent:library.id}),barRecord({...common,id:controlId,templateId,parent:layout.id})];
+  const fresh=[build({...common,id:templateId,copies:[libraryId,controlId]}),build({...common,id:libraryId,templateId,parent:library.id}),build({...common,id:controlId,templateId,parent:layout.id})];
   // A record lists its children in field 503, after its structure blocks.
   const adopt=(data,child)=>{
     const parts=fields(data),list=parts.find(f=>f.id===503&&f.wire===2);
@@ -1685,6 +1686,16 @@ export function addCompositeNode({mapPath,graphId,name,description,outside,outpu
   return {mapPath:out,source:file,...made.report,
     next:'Use mapPath in later calls. A graph calls the node with '+call+', the inputs in this order'+(made.report.outputs.length?", and reads what it gives with f.getCustomVariable(<any entity>, 'composite:"+name+":0').asType(<the type>) written after the call":'')+(made.report.flowOut?'':'. The node has no flow out: a graph that calls it stops there (end the body with a printString)')+'. '+(made.report.replaced?'The node was there and is made again in place: graphs that call it stay as they are while its inputs and outputs are the same.':'A node made this way opens in the editor and runs in play (seen 2026-11-15); what its body does is still for a playtest to show.')};
 }
+// A structure (结构体), with its Assemble, Split and Modify nodes, as the editor makes one (scene/struct-make.mjs).
+export function addStruct({mapPath,name,fields:list,outputName},workspace){
+  const file=resolve(mapPath),bytes=fs.readFileSync(file),root=container(bytes);
+  if(fields(root).filter(f=>f.id===10&&f.wire===2).length!==1)fail('UNSUPPORTED_SAVE','The save does not have the node graph section this tool knows.');
+  if(new Set(list.map(f=>f.name)).size!==list.length)fail('INVALID_STRUCT_FIELDS','Two fields of the structure have the same name.',{fields:list});
+  const made=makeStruct(one(root,10),{name,list},fail);
+  const out=output(workspace,file,outputName,'-struct');fs.writeFileSync(out,wrap(bytes,replace(root,10,2,made.section)));
+  return {mapPath:out,source:file,...made.report,
+    next:"Use mapPath in later calls. scene_add_notification_queue shows it on the screen; a server graph builds one with f.sendSignal('struct:"+name+"'"+list.map(f=>', <'+f.name+'>').join('')+') right before the f.refreshNotificationQueue that takes it. Written as the editor writes one (byte for byte against a structure made by hand); not yet opened in the editor.'};
+}
 export function addSignal({mapPath,name,parameter,parameters,outputName},workspace){
   const file=resolve(mapPath),bytes=fs.readFileSync(file);let root=container(bytes);
   if(fields(root).filter(f=>f.id===10&&f.wire===2).length!==1)fail('UNSUPPORTED_SAVE','The save does not have the node graph section this tool knows.');
@@ -1759,6 +1770,49 @@ export function addTimerDisplay({mapPath,name,timer,position=[0,380],size=[156,4
   const out=output(workspace,file,outputName,'-clock');fs.writeFileSync(out,wrap(bytes,placed.root));
   return {mapPath:out,source:file,controlId:placed.controlId,name,timer,position,size,
     next:'Use mapPath in later calls. The control shows the global timer "'+timer+'" as running time once a graph has started it.'};
+}
+
+// A notification queue (消息队列): a list on the screen that a graph pushes messages into, each one a structure
+// (scene_add_struct) shown as the queue's item lays it out (the node 更新消息队列, f.refreshNotificationQueue with the
+// structure from f.sendSignal('struct:NAME', ...): see toStructNodes in adapter.mjs). Read from a queue a creator
+// made by hand in the editor with the defaults (2026-11-17, MQ_Probe on the structure "Structure"; reproduced byte
+// for byte by scripts/dev/queue_make_check.mjs): the same three records as the other controls, written as the
+// editor of 7.1 writes them (each block names its record, 504 {2: 1, 3: 8, 4: id}), then four blocks: the layout of
+// the items (size, padding, gap), the item's style, the structure's fields (501: 2 on a string, place), and the
+// item, one element for each field bound to it as "{Structure name.field}" (a text, 17/7, for a string; 15/5 for
+// an integer). The control does not name the structure by its id: the binding is by name.
+export function queueRecord({id,name,slot,templateId,copies,parent,position,size,struct,item='Notification Item_1',itemSize=[240,48],gap=5}){
+  const text=s=>Buffer.from(s,'utf8'),E=Buffer.alloc(0),own=field(504,2,Buffer.concat([field(2,0,1),field(3,0,8),field(4,0,id)]));
+  const custom=Buffer.concat([field(15,2,E),field(501,0,5)]);
+  const state=i=>field(501,2,Buffer.concat([i?field(501,0,i):E,field(502,2,Buffer.concat([field(501,2,Buffer.concat([field(1,5,f32(1)),field(2,5,f32(1)),field(3,5,f32(1))])),
+    field(502,2,pair(0.5,0.5)),field(503,2,pair(0.5,0.5)),field(504,2,pair(position[0],position[1])),field(505,2,pair(size[0],size[1])),field(506,2,pair(0.5,0.5)),field(508,2,E)]))]));
+  const rect=Buffer.concat([0,1,2,3].map(state).concat([field(502,0,21),field(504,0,1)]));
+  const layout=Buffer.concat([field(503,2,pair(itemSize[0],itemSize[1])),field(504,2,pair(8,8)),field(505,2,pair(8,8)),field(509,0,1),field(510,0,1),field(512,5,f32(gap)),field(513,0,2),field(514,2,pair(8,8))]);
+  const style=field(501,2,Buffer.concat([field(501,2,Buffer.concat([field(501,2,E),field(502,2,E),field(503,2,E),field(504,2,pair(1,1)),field(505,2,E)])),field(505,0,1),field(506,2,text('Style_1'))]));
+  const listed=Buffer.concat(struct.fields.map(f=>field(501,2,Buffer.concat([f.type==='string'?field(501,0,2):E,field(502,2,text(f.name)),field(503,0,f.place)]))));
+  const element=f=>{const words=f.type==='string';return field(501,2,Buffer.concat([field(501,0,f.place),field(502,2,Buffer.concat([
+    field(words?17:15,2,Buffer.concat([f.shows?field(501,2,text(f.shows)):E,field(502,0,1),field(503,2,text('{'+struct.name+'.'+f.name+'}'))])),field(501,0,words?7:5),field(502,2,field(501,0,0xffffffffffffffffn))]))]));};
+  const items=Buffer.concat([field(501,2,Buffer.concat([field(501,2,field(501,2,text(item))),field(502,2,Buffer.concat(struct.fields.map(element))),field(503,0,1),field(504,0,1)])),field(502,0,0xffffffffffffffffn)]);
+  return Buffer.concat([field(501,0,id),field(502,2,uiBlock(11,field(501,0,id),1,5)),field(502,2,uiBlock(12,field(501,0,slot),2,6)),
+    copies?field(502,2,uiBlock(14,field(501,2,packIds(copies)),4,4)):field(502,2,uiBlock(13,field(501,0,templateId),3,3)),parent?field(504,0,parent):E,
+    field(505,2,uiBlock(12,field(501,2,text(name)),2,15)),field(505,2,uiBlock(14,custom,4,23,[field(503,2,uiBlock(14,custom,5,23,[field(503,0,1),own]))])),
+    field(505,2,uiBlock(11,Buffer.concat([field(12,2,E),field(501,0,2)]),1,12,[field(503,2,uiBlock(13,Buffer.concat([field(12,2,rect),field(501,0,2)]),4,12,[field(503,0,1),own]))])),
+    field(505,2,uiBlock(63,E,57,76,[field(503,2,uiBlock(68,layout,59,76,[field(503,0,1),own]))])),field(505,2,uiBlock(64,E,58,77,[field(503,2,uiBlock(69,style,60,77,[field(503,0,1),own]))])),
+    field(505,2,uiBlock(65,E,59,78,[field(503,2,uiBlock(70,listed,61,78,[field(503,0,1),own]))])),field(505,2,uiBlock(66,E,60,79,[field(503,2,uiBlock(71,items,62,79,[field(503,0,1),own]))]))]);
+}
+export function addNotificationQueue({mapPath,name,struct,position=[-600,100],size=[260,170],outputName},workspace){
+  const file=resolve(mapPath),bytes=fs.readFileSync(file);let root=container(bytes);
+  const records=uiRecords(root),layout=records.find(r=>r.structure.includes(7)),library=records.find(r=>r.structure.includes(14));
+  if(!layout||!library)fail('UNSUPPORTED_SAVE','The save has no default layout or no control library to add to.');
+  if(records.some(r=>r.name===name))fail('DUPLICATE_CONTROL_NAME','The interface already has a control with this name.',{name});
+  const structs=inspectStructs(root),found=structs.find(s=>s.name===struct);
+  if(!found)fail('STRUCT_NOT_FOUND','The save has no structure of this name: scene_add_struct makes one.',{struct,structs:structs.map(s=>s.name)});
+  if(found.fields.some(f=>f.type!=='string'&&f.type!=='int'))fail('STRUCT_FIELD_TYPE','A queue shows string and integer fields only (the only ones seen in a queue made by hand).',{struct,fields:found.fields});
+  if(Math.abs(position[0])>800||Math.abs(position[1])>450||!(size[0]>0&&size[0]<=1600&&size[1]>0&&size[1]<=900))fail('INVALID_RECT','position is [x, y] from the screen centre on a 1600 x 900 canvas, y up; size is [width, height].',{position,size});
+  const placed=placeControl(root,records,layout,library,{name,position,size,struct:found},queueRecord);
+  const out=output(workspace,file,outputName,'-queue');fs.writeFileSync(out,wrap(bytes,placed.root));
+  return {mapPath:out,source:file,controlId:placed.controlId,name,struct,position,size,
+    next:"Use mapPath in later calls. A server graph pushes a message with f.sendSignal('struct:"+struct+"'"+found.fields.map(f=>', <'+f.name+'>').join('')+") and then f.refreshNotificationQueue(player, "+placed.controlId+"n, 1n): the queue's number and its item, 1 (the queue has one). Which number names the queue is a guess (the control's id, as other controls' are): not yet seen in play."};
 }
 
 // A text box (文本框): the same three records, with text as content. Read from the official sample 界面控件 (功能示例-1

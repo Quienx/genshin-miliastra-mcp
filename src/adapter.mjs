@@ -14,6 +14,7 @@ import {signalDefinitionFingerprints,clientScriptSignalHeads} from './scene/sign
 import {inspectSignalContract} from './scene/signal-contract.mjs';
 import {inspectPrefabs} from './scene/prefabs.mjs';
 import {inspectCompositeNodes} from './scene/composite-nodes.mjs';
+import {inspectStructs} from './scene/struct-make.mjs';
 
 export const packageRoot = path.dirname(fileURLToPath(import.meta.resolve('genshin-ts/package.json')));
 export const sha = value => createHash('sha256').update(value).digest('hex');
@@ -70,7 +71,8 @@ export function inspectBytes(bytes) {
     return {id,name:obj.name||'',type:m.type,nodeCount:obj.nodes?.length||0,editorCount:graphEditorCount(obj).total,nodePayloadHash:graphNodePayloadHash(obj,nodeGraphMessage),topology:graphTopology(obj,nodeGraphMessage),signalReferences,
       ...(compositeNodeRefs.length?{compositeNodeRefs}:{}),writable:isNodeGraphEmptyForInjection(obj)||(obj.name||'').startsWith('_GSTS')};
   }));
-  return {bytes:bytes.length,sha256:sha(bytes),schema:readUint32BE(bytes,4),graphs,compositeNodes,signals,prefabTemplates:inspectPrefabs(payload),battleConfigurations:inspectBattleConfigurations(payload),uiConfigurations:inspectUIConfigurations(payload),signalInspection:{scope:'Pinned backend signal definition node IDs and matching graph references; parameter schema and runtime not verified'},entities:inspectEntities(payload),
+  const structs=inspectStructs(payload).map(({assemble,...s})=>s);
+  return {bytes:bytes.length,sha256:sha(bytes),schema:readUint32BE(bytes,4),graphs,compositeNodes,...(structs.length?{structs}:{}),signals,prefabTemplates:inspectPrefabs(payload),battleConfigurations:inspectBattleConfigurations(payload),uiConfigurations:inspectUIConfigurations(payload),signalInspection:{scope:'Pinned backend signal definition node IDs and matching graph references; parameter schema and runtime not verified'},entities:inspectEntities(payload),
     warnings:graphs.length?[]:[{code:'MISSING_GRAPH',message:'Create and save a server entity node graph named _GSTS_MCP_Test in the editor, and attach it to the stage entity.'}]};
 }
 export function inspectFile(file) { return {path:file,modifiedAt:fs.statSync(file).mtime.toISOString(),...inspectBytes(fs.readFileSync(file))}; }
@@ -151,10 +153,50 @@ export function toCompositeNodes(gilBytes,giaBytes){
   header.writeUInt32BE(payload.length+20,0);header.writeUInt32BE(payload.length,16);
   return Buffer.concat([header,payload,giaBytes.subarray(-4)]);
 }
+// A structure (结构体, scene_add_struct) built and pushed into a notification queue (消息队列). The compiler has neither
+// the Assemble node of a structure nor the fourth input of 更新消息队列 (it knows player, queue and item only). So a
+// graph writes f.sendSignal('struct:NAME', ...fields) and then f.refreshNotificationQueue(player, queue, item), and
+// here, before the graph goes into the save, the send becomes the structure's Assemble node, as a creator placed one
+// (2026-11-17): the definition's id, the fields as its inputs (compositePinIndex), no name pin and no flow, the flow
+// going past it; and the next queue node after it gets the structure on its fourth input (InParam 3, type 25), with
+// the structure named on the node (usingStruct) and on the graph (an affiliation of type 66002).
+// shortcut: a structure only goes into a queue node, the one written next after it; upgrade when a graph needs one elsewhere.
+const STRUCT_CALL=/^struct:/,QUEUE=833;
+export function toStructNodes(gilBytes,giaBytes){
+  const {root:proto,rootMessage}=loadGiaProto(),root=rootMessage.decode(giaBytes.subarray(20,giaBytes.length-4)),graph=root?.graph?.graph?.inner?.graph;
+  const named=(graph?.nodes??[]).filter(n=>n.genericId?.nodeId===300000).map(n=>({node:n,text:(n.pins??[]).filter(p=>p?.i1?.kind===5).map(p=>textOf(p.value)).find(Boolean)})).filter(x=>x.text&&STRUCT_CALL.test(x.text.val));
+  if(!named.length)return giaBytes;
+  const known=inspectStructs(gilBytes.subarray(20,-4)),Pin=proto.lookupType('NodePin'),Info=proto.lookupType('GraphAffiliation.Info'),Affiliation=proto.lookupType('GraphAffiliation'),Wire=proto.lookupType('NodeConnection');
+  const queues=graph.nodes.filter(n=>n.genericId?.nodeId===QUEUE),taken=new Set(),used=new Set();
+  for(const {node,text} of named.sort((a,b)=>a.node.nodeIndex-b.node.nodeIndex)){
+    const name=text.val.replace(STRUCT_CALL,''),s=known.find(x=>x.name===name);
+    if(!s?.assemble)fail('STRUCT_NOT_FOUND','The save has no structure of this name: scene_add_struct makes one.',{struct:name,structs:known.map(x=>x.name)});
+    const inputs=(node.pins??[]).filter(p=>p?.i1?.kind===3).sort((a,b)=>(a.i1.index||0)-(b.i1.index||0));
+    if(inputs.length!==s.fields.length)fail('STRUCT_FIELDS','The call gives '+inputs.length+' value(s) and the structure has '+s.fields.length+": f.sendSignal('struct:"+name+"'"+s.fields.map(f=>', <'+f.name+'>').join('')+').',{struct:name,fields:s.fields});
+    const queue=queues.find(q=>q.nodeIndex>node.nodeIndex&&!taken.has(q));
+    if(!queue)fail('STRUCT_UNUSED',"A structure built with f.sendSignal('struct:"+name+"', ...) goes into the f.refreshNotificationQueue(player, queue, item) written after it, and there is none.",{struct:name});
+    taken.add(queue);
+    // The flow goes past the node: what flowed into it flows where it went.
+    const onward=(node.pins??[]).filter(p=>p?.i1?.kind===2).flatMap(p=>p.connects??[]);
+    for(const other of graph.nodes)for(const pin of other.pins??[])if(pin?.i1?.kind===2&&(pin.connects??[]).some(w=>w.id===node.nodeIndex))
+      pin.connects=pin.connects.flatMap(w=>w.id===node.nodeIndex?onward.map(o=>Wire.fromObject(Wire.toObject(o))):[w]);
+    const id={class:10001,type:20000,kind:22001,nodeId:s.assemble.definitionId};
+    node.genericId=id;node.concreteId={...id};
+    node.pins=inputs;inputs.forEach((p,i)=>{p.compositePinIndex=s.assemble.pins[i];});
+    const info={source:{class:10001,type:20000,kind:22000,id:QUEUE},alwaysOneXxxx:1,structId:{structId:s.id}};
+    queue.pins=[...(queue.pins??[]).filter(p=>!(p?.i1?.kind===3&&p.i1.index===3)),Pin.fromObject({i1:{kind:3,index:3},i2:{kind:3,index:3},type:25,connects:[{id:node.nodeIndex,connect:{kind:4},connect2:{kind:4}}],
+      value:{class:10000,alreadySetVal:true,bConcreteValue:{value:{class:10001,itemType:{classBase:1,type_server:{type:25,kind:1,item:{structId:s.id}}},bStruct:{}},structs:{class:1,inner:{wrapper:{class:10001,item:{structId:s.id}}}}}}})];
+    queue.usingStruct=[Info.fromObject(info)];
+    if(!used.has(s.id)){used.add(s.id);graph.affiliations=[...(graph.affiliations??[]),Affiliation.fromObject({info,type:{type:66002}})];}
+  }
+  const payload=Buffer.from(rootMessage.encode(root).finish()),header=Buffer.from(giaBytes.subarray(0,20));
+  header.writeUInt32BE(payload.length+20,0);header.writeUInt32BE(payload.length,16);
+  return Buffer.concat([header,payload,giaBytes.subarray(-4)]);
+}
 function listedSignals(gilBytes){const payload=gilBytes.subarray(20,-4),found=[];parseMessage(payload,0,payload.length,0,0,0,0,0,0,0,found);return [...buildSignalNodeIdMapFromFields(payload,found).keys()];}
 export function inject(bytes, giaBytes, targetId) {
   // Keep upstream non-empty target checks enabled; never patch arbitrary binary fields.
-  const result=createInjector({lang:'en-US'}).injectBytes({gilBytes:bytes,giaBytes:toCompositeNodes(bytes,toClientScriptSignals(bytes,giaBytes)),targetId});
+  const result=createInjector({lang:'en-US'}).injectBytes({gilBytes:bytes,giaBytes:toStructNodes(bytes,toCompositeNodes(bytes,toClientScriptSignals(bytes,giaBytes))),targetId});
   inspectBytes(result.bytes);
   return Buffer.from(result.bytes);
 }
