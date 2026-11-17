@@ -153,6 +153,22 @@ export function toCompositeNodes(gilBytes,giaBytes){
   header.writeUInt32BE(payload.length+20,0);header.writeUInt32BE(payload.length,16);
   return Buffer.concat([header,payload,giaBytes.subarray(-4)]);
 }
+// No entity. A pin of type entity left empty (a projectile launched without a target to follow: 定点发射投射物's
+// 追踪目标, as the editor's own bow graphs leave it) has no literal the compiler can write in a client graph
+// (CLIENT_VALUE_TYPE_UNAVAILABLE). So a graph passes f.getCustomVariable(anyEntity, 'entity:none').asType('entity'),
+// and here that read is taken out with its wires: the pins it fed are left unwired and empty, as the editor leaves
+// them (read from the user's graph "Bow Rapid Shot 01", 2026-11-17: the pin's value is its type alone).
+const NO_ENTITY='entity:none',CUSTOM_VARIABLE_READS=new Set([GET_CUSTOM_VARIABLE,200016]);
+export function toEmptyEntities(giaBytes){
+  const {rootMessage}=loadGiaProto(),root=rootMessage.decode(giaBytes.subarray(20,giaBytes.length-4)),graph=root?.graph?.graph?.inner?.graph;
+  const none=new Set((graph?.nodes??[]).filter(n=>CUSTOM_VARIABLE_READS.has(Number(n.genericId?.nodeId))&&(n.pins??[]).some(p=>p?.i1?.kind===3&&textOf(p.value)?.val===NO_ENTITY)).map(n=>n.nodeIndex));
+  if(!none.size)return giaBytes;
+  for(const node of graph.nodes)for(const pin of node.pins??[])if(pin.connects?.length)pin.connects=pin.connects.filter(w=>!none.has(w.id));
+  graph.nodes=graph.nodes.filter(n=>!none.has(n.nodeIndex));
+  const payload=Buffer.from(rootMessage.encode(root).finish()),header=Buffer.from(giaBytes.subarray(0,20));
+  header.writeUInt32BE(payload.length+20,0);header.writeUInt32BE(payload.length,16);
+  return Buffer.concat([header,payload,giaBytes.subarray(-4)]);
+}
 // A structure (结构体, scene_add_struct) built and pushed into a notification queue (消息队列). The compiler has neither
 // the Assemble node of a structure nor the fourth input of 更新消息队列 (it knows player, queue and item only). So a
 // graph writes f.sendSignal('struct:NAME', ...fields) and then f.refreshNotificationQueue(player, queue, item), and
@@ -196,9 +212,9 @@ export function toStructNodes(gilBytes,giaBytes){
   return Buffer.concat([header,payload,giaBytes.subarray(-4)]);
 }
 function listedSignals(gilBytes){const payload=gilBytes.subarray(20,-4),found=[];parseMessage(payload,0,payload.length,0,0,0,0,0,0,0,found);return [...buildSignalNodeIdMapFromFields(payload,found).keys()];}
-export function inject(bytes, giaBytes, targetId) {
+export function inject(bytes, giaBytes, targetId, replaceEditorGraph=false) {
   // Keep upstream non-empty target checks enabled; never patch arbitrary binary fields.
-  const result=createInjector({lang:'en-US'}).injectBytes({gilBytes:bytes,giaBytes:toStructNodes(bytes,toCompositeNodes(bytes,toClientScriptSignals(bytes,giaBytes))),targetId});
+  const result=createInjector({lang:'en-US'}).injectBytes({gilBytes:bytes,giaBytes:toEmptyEntities(toStructNodes(bytes,toCompositeNodes(bytes,toClientScriptSignals(bytes,giaBytes)))),targetId,skipNonEmptyCheck:replaceEditorGraph});
   inspectBytes(result.bytes);
   return Buffer.from(result.bytes);
 }
