@@ -182,7 +182,9 @@ export function toStructNodes(gilBytes,giaBytes){
       pin.connects=pin.connects.flatMap(w=>w.id===node.nodeIndex?onward.map(o=>Wire.fromObject(Wire.toObject(o))):[w]);
     const id={class:10001,type:20000,kind:22001,nodeId:s.assemble.definitionId};
     node.genericId=id;node.concreteId={...id};
-    node.pins=inputs;inputs.forEach((p,i)=>{p.compositePinIndex=s.assemble.pins[i];});
+    // Each input as the editor writes one on an Assemble node: its field's type on the pin's value too (type_server),
+    // without which the editor drops a wire into it and shows the field empty (seen 2026-11-17, a wire from a signal).
+    node.pins=inputs.map((p,i)=>{const o=Pin.toObject(p);o.compositePinIndex=s.assemble.pins[i];if(o.value)o.value.itemType={...(o.value.itemType??{}),type_server:{...(o.value.itemType?.type_server??{}),type:o.type}};return Pin.fromObject(o);});
     const info={source:{class:10001,type:20000,kind:22000,id:QUEUE},alwaysOneXxxx:1,structId:{structId:s.id}};
     queue.pins=[...(queue.pins??[]).filter(p=>!(p?.i1?.kind===3&&p.i1.index===3)),Pin.fromObject({i1:{kind:3,index:3},i2:{kind:3,index:3},type:25,connects:[{id:node.nodeIndex,connect:{kind:4},connect2:{kind:4}}],
       value:{class:10000,alreadySetVal:true,bConcreteValue:{value:{class:10001,itemType:{classBase:1,type_server:{type:25,kind:1,item:{structId:s.id}}},bStruct:{}},structs:{class:1,inner:{wrapper:{class:10001,item:{structId:s.id}}}}}}})];
