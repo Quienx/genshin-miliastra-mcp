@@ -1780,19 +1780,23 @@ export function addTimerDisplay({mapPath,name,timer,position=[0,380],size=[156,4
 // editor of 7.1 writes them (each block names its record, 504 {2: 1, 3: 8, 4: id}), then four blocks: the layout of
 // the items (size, padding, gap), the item's style, the structure's fields (501: 2 on a string, place), and the
 // item, one element for each field bound to it as "{Structure name.field}" (a text, 17/7, for a string; 15/5 for
-// an integer). The control does not name the structure by its id: the binding is by name.
-export function queueRecord({id,name,slot,templateId,copies,parent,position,size,struct,item='Notification Item_1',itemSize=[240,48],gap=5}){
+// an integer). The control does not name the structure by its id: the binding is by name. Its style must name an
+// asset group (queueAssets) or no message shows.
+export function queueRecord({id,name,slot,templateId,copies,parent,position,size,struct,assets,item='Notification Item_1',itemSize=[240,48],gap=5}){
   const text=s=>Buffer.from(s,'utf8'),E=Buffer.alloc(0),own=field(504,2,Buffer.concat([field(2,0,1),field(3,0,8),field(4,0,id)]));
   const custom=Buffer.concat([field(15,2,E),field(501,0,5)]);
   const state=i=>field(501,2,Buffer.concat([i?field(501,0,i):E,field(502,2,Buffer.concat([field(501,2,Buffer.concat([field(1,5,f32(1)),field(2,5,f32(1)),field(3,5,f32(1))])),
     field(502,2,pair(0.5,0.5)),field(503,2,pair(0.5,0.5)),field(504,2,pair(position[0],position[1])),field(505,2,pair(size[0],size[1])),field(506,2,pair(0.5,0.5)),field(508,2,E)]))]));
   const rect=Buffer.concat([0,1,2,3].map(state).concat([field(502,0,21),field(504,0,1)]));
   const layout=Buffer.concat([field(503,2,pair(itemSize[0],itemSize[1])),field(504,2,pair(8,8)),field(505,2,pair(8,8)),field(509,0,1),field(510,0,1),field(512,5,f32(gap)),field(513,0,2),field(514,2,pair(8,8))]);
-  const style=field(501,2,Buffer.concat([field(501,2,Buffer.concat([field(501,2,E),field(502,2,E),field(503,2,E),field(504,2,pair(1,1)),field(505,2,E)])),field(505,0,1),field(506,2,text('Style_1'))]));
+  // The style names the asset group the item is drawn with (queueAssets) and takes the item's size; without it no
+  // message shows (seen in play 2026-11-17: the creator fixed a queue the tool made by adding the groups).
+  const named=assets?Buffer.concat([field(2,0,1),field(3,0,8),field(4,0,assets)]):E;
+  const style=field(501,2,Buffer.concat([field(501,2,Buffer.concat([field(501,2,named),field(502,2,E),field(503,2,assets?pair(itemSize[0],itemSize[1]):E),field(504,2,pair(1,1)),field(505,2,E)])),field(505,0,1),field(506,2,text('Style_1'))]));
   const listed=Buffer.concat(struct.fields.map(f=>field(501,2,Buffer.concat([f.type==='string'?field(501,0,2):E,field(502,2,text(f.name)),field(503,0,f.place)]))));
   const element=f=>{const words=f.type==='string';return field(501,2,Buffer.concat([field(501,0,f.place),field(502,2,Buffer.concat([
     field(words?17:15,2,Buffer.concat([f.shows?field(501,2,text(f.shows)):E,field(502,0,1),field(503,2,text('{'+struct.name+'.'+f.name+'}'))])),field(501,0,words?7:5),field(502,2,field(501,0,0xffffffffffffffffn))]))]));};
-  const items=Buffer.concat([field(501,2,Buffer.concat([field(501,2,field(501,2,text(item))),field(502,2,Buffer.concat(struct.fields.map(element))),field(503,0,1),field(504,0,1)])),field(502,0,0xffffffffffffffffn)]);
+  const items=Buffer.concat([field(501,2,Buffer.concat([field(501,2,Buffer.concat([field(501,2,text(item)),assets?field(502,0,1):E])),field(502,2,Buffer.concat(struct.fields.map(element))),field(503,0,1),field(504,0,1)])),field(502,0,0xffffffffffffffffn)]);
   return Buffer.concat([field(501,0,id),field(502,2,uiBlock(11,field(501,0,id),1,5)),field(502,2,uiBlock(12,field(501,0,slot),2,6)),
     copies?field(502,2,uiBlock(14,field(501,2,packIds(copies)),4,4)):field(502,2,uiBlock(13,field(501,0,templateId),3,3)),parent?field(504,0,parent):E,
     field(505,2,uiBlock(12,field(501,2,text(name)),2,15)),field(505,2,uiBlock(14,custom,4,23,[field(503,2,uiBlock(14,custom,5,23,[field(503,0,1),own]))])),
@@ -1800,7 +1804,28 @@ export function queueRecord({id,name,slot,templateId,copies,parent,position,size
     field(505,2,uiBlock(63,E,57,76,[field(503,2,uiBlock(68,layout,59,76,[field(503,0,1),own]))])),field(505,2,uiBlock(64,E,58,77,[field(503,2,uiBlock(69,style,60,77,[field(503,0,1),own]))])),
     field(505,2,uiBlock(65,E,59,78,[field(503,2,uiBlock(70,listed,61,78,[field(503,0,1),own]))])),field(505,2,uiBlock(66,E,60,79,[field(503,2,uiBlock(71,items,62,79,[field(503,0,1),own]))]))]);
 }
-export function addNotificationQueue({mapPath,name,struct,position=[-600,100],size=[260,170],outputName},workspace){
+// The asset group (素材组) a queue's item is drawn with: one for each of the queue's three records, with the four parts
+// the editor puts in a new one (a text box, an image, a UI animation, a special number), each a record of its own whose
+// parent is the group; the group itself has no parent and is listed in the interface's root list. The text box shows
+// the message: words with the fields written in as {4:field} (the creator wrote "{4:count}{4:text}"). Read from the
+// groups a creator added by hand to a queue the tool made (2026-11-17), the defaults' odd floats as the editor stored them.
+export function queueAssets({id,parts:[words,image,animation,number],text:shown,itemSize=[240,48]}){
+  const text=s=>Buffer.from(s,'utf8'),E=Buffer.alloc(0),own=n=>field(504,2,Buffer.concat([field(2,0,1),field(3,0,8),field(4,0,n)])),minus=field(501,0,0xffffffffffffffffn);
+  const custom=Buffer.concat([field(15,2,E),field(501,0,5)]),seen=n=>field(505,2,uiBlock(14,custom,4,23,[field(503,2,uiBlock(14,custom,5,23,[field(503,0,1),own(n)]))]));
+  const state=(i,at,box)=>field(501,2,Buffer.concat([i?field(501,0,i):E,field(502,2,Buffer.concat([field(501,2,Buffer.concat([field(1,5,f32(1)),field(2,5,f32(1)),field(3,5,f32(1))])),
+    field(502,2,pair(0.5,0.5)),field(503,2,pair(0.5,0.5)),field(504,2,pair(at[0],at[1])),field(505,2,pair(box[0],box[1])),field(506,2,pair(0.5,0.5)),field(508,2,E)]))]));
+  const rect=(n,at,box,kind)=>field(505,2,uiBlock(11,Buffer.concat([field(12,2,E),field(501,0,2)]),1,12,[field(503,2,uiBlock(13,Buffer.concat([field(12,2,Buffer.concat([0,1,2,3].map(i=>state(i,at,box)).concat([kind?field(502,0,kind):E,field(504,0,1)]))),field(501,0,2)]),4,12,[field(503,0,1),own(n)]))]));
+  const content=(n,wrap,at,type,inner,innerWrap=wrap,innerAt=at+1)=>field(505,2,uiBlock(wrap,E,at,type,[field(503,2,uiBlock(innerWrap,inner,innerAt,type,[field(503,0,1),own(n)]))]));
+  const part=(n,name,at,box,kind,body)=>Buffer.concat([field(501,0,n),field(502,2,uiBlock(11,field(501,0,n),1,5)),field(504,0,id),field(505,2,uiBlock(12,field(501,2,text(name)),2,15)),seen(n),rect(n,at,box,kind),body]);
+  return [Buffer.concat([field(501,0,id),field(502,2,uiBlock(11,field(501,0,id),1,5)),field(502,2,uiBlock(16,Buffer.concat([field(11,2,E),field(501,0,1)]),6,55,[field(503,2,uiBlock(46,field(501,0,1),39,55,[field(503,0,1),own(id)]))])),
+      field(503,2,packIds([words,image,animation,number])),field(505,2,uiBlock(12,field(501,2,text('Default Status Asset Group')),2,15)),rect(id,[0,0],itemSize,0),seen(id),
+      content(id,46,38,56,Buffer.concat([field(1,2,E),field(2,2,pair(50,50)),field(3,0,2)]),47,40)]),
+    part(words,'Text Box',[0,0.9374330043792725],[239.99993896484375,48.00004959106445],3,content(words,19,9,25,Buffer.concat([field(502,0,20),field(505,2,field(501,2,text(shown))),field(506,0,1),field(507,0,12),field(510,0,0xffffffff),field(511,0,0xffffff),field(512,0,260326),field(515,0,0x33333333)]))),
+    part(image,'Image',[82.50006103515625,-32.8124885559082],[80,80],9,content(image,31,21,38,Buffer.concat([field(3,2,minus),field(4,0,0xffffffff),field(6,2,E),field(10,2,E)]))),
+    part(animation,'UI Animation',[0,0],[100,100],10,content(animation,32,22,39,E)),
+    part(number,'Special Number',[0,0],[100,40],19,content(number,61,51,70,Buffer.concat([field(508,2,minus),field(511,0,18),field(514,0,260326),field(516,0,0x33333333),field(517,0,0xffffffff),field(518,2,minus),field(521,2,minus)]),62,53))];
+}
+export function addNotificationQueue({mapPath,name,struct,text,position=[-600,100],size=[260,170],outputName},workspace){
   const file=resolve(mapPath),bytes=fs.readFileSync(file);let root=container(bytes);
   const records=uiRecords(root),layout=records.find(r=>r.structure.includes(7)),library=records.find(r=>r.structure.includes(14));
   if(!layout||!library)fail('UNSUPPORTED_SAVE','The save has no default layout or no control library to add to.');
@@ -1809,10 +1834,16 @@ export function addNotificationQueue({mapPath,name,struct,position=[-600,100],si
   if(!found)fail('STRUCT_NOT_FOUND','The save has no structure of this name: scene_add_struct makes one.',{struct,structs:structs.map(s=>s.name)});
   if(found.fields.some(f=>f.type!=='string'&&f.type!=='int'))fail('STRUCT_FIELD_TYPE','A queue shows string and integer fields only (the only ones seen in a queue made by hand).',{struct,fields:found.fields});
   if(Math.abs(position[0])>800||Math.abs(position[1])>450||!(size[0]>0&&size[0]<=1600&&size[1]>0&&size[1]<=900))fail('INVALID_RECT','position is [x, y] from the screen centre on a 1600 x 900 canvas, y up; size is [width, height].',{position,size});
-  const placed=placeControl(root,records,layout,library,{name,position,size,struct:found},queueRecord);
-  const out=output(workspace,file,outputName,'-queue');fs.writeFileSync(out,wrap(bytes,placed.root));
-  return {mapPath:out,source:file,controlId:placed.controlId,name,struct,position,size,
-    next:"Use mapPath in later calls. A server graph pushes a message with f.sendSignal('struct:"+struct+"'"+found.fields.map(f=>', <'+f.name+'>').join('')+") and then f.refreshNotificationQueue(player, "+placed.controlId+"n, 1n): the queue's number and its item, 1 (the queue has one). Which number names the queue is a guess (the control's id, as other controls' are): not yet seen in play."};
+  // Each of the three records gets its own asset group (five records after the control's three).
+  const next=Math.max(...records.map(r=>r.id))+1,groupOf=id=>next+3+5*(id-next),shown=text??found.fields.map(f=>'{4:'+f.name+'}').join(' ');
+  const placed=placeControl(root,records,layout,library,{name,position,size,struct:found},spec=>queueRecord({...spec,assets:groupOf(spec.id)}));
+  const groups=[0,1,2].map(i=>groupOf(next+i)),assets=groups.flatMap(g=>queueAssets({id:g,parts:[g+1,g+2,g+3,g+4],text:shown}));
+  const section=fields(one(placed.root,9));let lastRecord=-1;section.forEach((f,i)=>{if(f.id===502&&f.wire===2)lastRecord=i;});
+  const rebuilt=section.map(f=>f.id===501&&f.wire===2?field(501,2,Buffer.concat([f.data,packIds(groups)])):f.raw);
+  rebuilt.splice(lastRecord+1,0,...assets.map(b=>field(502,2,b)));
+  const out=output(workspace,file,outputName,'-queue');fs.writeFileSync(out,wrap(bytes,replace(placed.root,9,2,Buffer.concat(rebuilt))));
+  return {mapPath:out,source:file,controlId:placed.controlId,name,struct,text:shown,position,size,
+    next:"Use mapPath in later calls. A server graph pushes a message with f.sendSignal('struct:"+struct+"'"+found.fields.map(f=>', <'+f.name+'>').join('')+") and then f.refreshNotificationQueue(player, "+placed.controlId+"n, 1n): the queue's number (controlId, seen in play) and its item, 1. The message shows as \""+shown+"\"."};
 }
 
 // A text box (文本框): the same three records, with text as content. Read from the official sample 界面控件 (功能示例-1

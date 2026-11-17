@@ -2,7 +2,9 @@
 // The editor's own bytes come from a save where a creator made a structure "Structure" (text, icon: string; count:
 // integer) and a notification queue "MQ_Probe" on it by hand (2026-11-17); that save is a creator's level and is not
 // in the repository, so what it holds is kept here as ids, pin numbers and sha256 sums of the records
-// (scripts/dev/struct_make_check.mjs and queue_make_check.mjs compare against such a save itself).
+// (scripts/dev/struct_make_check.mjs and queue_make_check.mjs compare against such a save itself). No message showed
+// until the creator gave each of the tool's queue records an asset group to draw its item with (a second save, same day):
+// those records too are kept here as sums.
 // struct-queue-call.gia is a graph compiled by the tool from:
 //   f.printString('before'); f.sendSignal('struct:SS_Note','Wood',3n);
 //   f.refreshNotificationQueue(evt.eventSourceEntity as any,1073782132n,1n); f.printString('after');
@@ -14,7 +16,7 @@ import {createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {container,fields} from '../src/scene/wire.mjs';
 import {loadGiaProto} from 'genshin-ts/injector/proto';
-import {addStruct,addNotificationQueue,queueRecord,listInterface} from '../src/scene-save.mjs';
+import {addStruct,addNotificationQueue,queueRecord,queueAssets,listInterface} from '../src/scene-save.mjs';
 import {structRecord,structDefinitions,inspectStructs} from '../src/scene/struct-make.mjs';
 import {toStructNodes} from '../src/adapter.mjs';
 
@@ -32,6 +34,11 @@ try{
   const template=queueRecord({id:1073782126,name:'MQ_Probe',slot:39851,copies:[1073782129,1073782130],position:[-669.3750610351562,20.250043869018555],size:[258.75006103515625,120.0000991821289],struct});
   assert.equal(sha(template),'7efab20262e54bff70db3264d7d68387b654b90a057c7b2bee77d05c7b3efaa4','queue template');
 
+  // The asset group a creator added to the tool's queue (SS_Notes on SS_Note), and the queue's layout copy naming it.
+  assert.equal(sha(Buffer.concat(queueAssets({id:1073782149,parts:[1073782150,1073782151,1073782152,1073782153],text:'{4:count}{4:text}'}))),'89c9b93209d8d447fc14c9045aef9b2be6448fc7c00a92e4437b492c50836c57','asset group');
+  const note={name:'SS_Note',fields:[{name:'text',type:'string',place:1},{name:'count',type:'int',place:2}]};
+  assert.equal(sha(queueRecord({id:1073782133,name:'SS_Notes',slot:39852,templateId:1073782131,parent:1073741825,position:[-655.3124389648438,-1.2499617338180542],size:[260,170],struct:note,assets:1073782154})),'cb73c961fee2175226aefc9087420622728edc0c32b19c96df537e5a9c626883','queue copy with its group');
+
   // Writing them into a save.
   const base=path.join(dir,'composite-node-spliced.gil'),made=addStruct({mapPath:base,name:'SS_Note',fields:[{name:'text',type:'string'},{name:'count',type:'int'}]},workspace);
   const saved=inspectStructs(container(fs.readFileSync(made.mapPath)));
@@ -41,7 +48,13 @@ try{
   assert.deepEqual(mine.map(d=>d.type.kind),['Assembly','Split','Modify','Assembly','Split','Assembly','Split','Assembly','Split']);
   assert.throws(()=>addStruct({mapPath:made.mapPath,name:'SS_Note',fields:[{name:'a',type:'int'}]},workspace),/DUPLICATE_STRUCT_NAME|already has a structure/);
   const queue=addNotificationQueue({mapPath:made.mapPath,name:'SS_Notes',struct:'SS_Note'},workspace);
-  assert.ok(listInterface({mapPath:queue.mapPath}).controls?.some?.(c=>c.name==='SS_Notes')??JSON.stringify(listInterface({mapPath:queue.mapPath})).includes('SS_Notes'));
+  assert.ok(JSON.stringify(listInterface({mapPath:queue.mapPath})).includes('SS_Notes'));
+  assert.equal(queue.text,'{4:text} {4:count}');
+  { // three control records and three groups of five, the groups in the root list
+    const before=fields(fields(container(fs.readFileSync(made.mapPath))).find(f=>f.id===9).data),after=fields(fields(container(fs.readFileSync(queue.mapPath))).find(f=>f.id===9).data);
+    const count=list=>list.filter(f=>f.id===502&&f.wire===2).length;assert.equal(count(after)-count(before),18);
+    const names=after.filter(f=>f.id===502&&f.wire===2).map(f=>f.data.toString('latin1')).filter(t=>t.includes('Default Status Asset Group')).length;assert.equal(names,3);
+  }
   assert.throws(()=>addNotificationQueue({mapPath:made.mapPath,name:'X',struct:'Nope'},workspace),/STRUCT_NOT_FOUND|no structure/);
 
   // A graph's struct: call becomes the Assemble node, put on the queue node's fourth input.
