@@ -37,4 +37,7 @@ const code=e=>{try{withTitles(gia,e);}catch(x){return x.code;}};
 assert.equal(code("// @title lost\nconst x = 1\n"),'TITLE_WITHOUT_HANDLER','a title over no handler fails');
 assert.equal(code("// @title t\n.onSignal(NOPE, (evt, f) => {})\n"),'TITLE_WITHOUT_HANDLER','a signal constant the source does not set fails');
 assert.equal(code("// @title t\n.onSignal('SS_other', (evt, f) => {})\n"),'TITLE_WITHOUT_HANDLER','a handler the graph does not have fails');
+assert.equal(code("const S=defineSignal('SS_other',[['player','int']] as const)\n// @title t\n.onSignal(S, (evt, f) => {})\n"),'TITLE_WITHOUT_HANDLER','a defineSignal constant is followed to its name');
+const viaDefine=withTitles(gia,SOURCE.replace("const SAY = 'CC_say'","const SAY=defineSignal('CC_say',[] as const)"));
+assert.notEqual(viaDefine,gia,'a defineSignal constant finds its handler');
 console.log('graph-titles: ok');

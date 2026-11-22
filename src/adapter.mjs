@@ -215,7 +215,7 @@ export function toStructNodes(gilBytes,giaBytes){
 // Titles a creator reads in the editor. The compiler drops comments and keeps no source line per node, but a handler is
 // one event node, so a run of `// @title text` lines right above the line of .on('event', ...) or .onSignal(NAME, ...)
 // becomes that event node's note (节点注释), stored as the editor stores one: {content}, no position (read from the
-// official sample 定时器地形, graph "Door Lever"). A signal named by a constant is looked up in the source. Handlers of
+// official sample 定时器地形, graph "Door Lever"). A signal named by a constant (const S = 'NAME', or const S = defineSignal('NAME', ...)) is looked up in the source. Handlers of
 // one event that the compiler kept apart get their titles in order; if it merged them, their titles join on one node.
 const TITLE=/^\s*\/\/\s*@title\b\s?(.*)$/,HANDLER=/\.(on|onSignal)\(\s*(?:(['"`])([^'"`]+)\2|([A-Za-z_$][\w$]*))/,MONITOR_SIGNAL=300001;
 export function withTitles(giaBytes,code){
@@ -227,8 +227,8 @@ export function withTitles(giaBytes,code){
     const m=HANDLER.exec(lines[i]??''),title=text.join('\n');
     if(!m)fail('TITLE_WITHOUT_HANDLER','A // @title line stands right above the line of the handler it names: .on(\'event\', ...) or .onSignal(NAME, ...).',{title,line:i+1});
     let name=m[3];
-    if(!name){const c=new RegExp('\\b(?:const|let|var)\\s+'+m[4].replace(/\$/g,'\\$')+'\\s*=\\s*([\'"`])([^\'"`]+)\\1').exec(code);
-      if(!c)fail('TITLE_WITHOUT_HANDLER','The signal of a titled handler is a constant the source does not set to a name: const '+m[4]+' = \'NAME\'.',{title,line:i+1});name=c[2];}
+    if(!name){const c=new RegExp('\\b(?:const|let|var)\\s+'+m[4].replace(/\$/g,'\\$')+'\\s*=\\s*(?:defineSignal\\(\\s*)?([\'"`])([^\'"`]+)\\1').exec(code);
+      if(!c)fail('TITLE_WITHOUT_HANDLER','The signal of a titled handler is a constant the source does not set to a name: const '+m[4]+' = \'NAME\' or defineSignal(\'NAME\', ...).',{title,line:i+1});name=c[2];}
     const ids=m[1]==='onSignal'?null:eventNodeIds(name);
     if(m[1]==='on'&&!ids)fail('TITLE_WITHOUT_HANDLER','The titled handler\'s event is not a server event the catalogue knows: titles go on server graphs.',{title,event:name,line:i+1});
     wanted.push({key:m[1]==='onSignal'?'signal '+name:'event '+name,ids,title});
