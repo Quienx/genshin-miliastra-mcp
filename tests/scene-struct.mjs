@@ -17,7 +17,7 @@ import {fileURLToPath} from 'node:url';
 import {container,fields} from '../src/scene/wire.mjs';
 import {loadGiaProto} from 'genshin-ts/injector/proto';
 import {addStruct,addNotificationQueue,queueRecord,queueAssets,listInterface,addComponents,listComponents} from '../src/scene-save.mjs';
-import {structRecord,structDefinitions,inspectStructs,structVariableBlock} from '../src/scene/struct-make.mjs';
+import {structRecord,structDefinitions,inspectStructs,structVariableBlock,textDictBlock,structVariableOf,structVariablesNamed} from '../src/scene/struct-make.mjs';
 import {toStructNodes,toStructValues,inject} from '../src/adapter.mjs';
 import {readGraph} from '../src/scene/graph-read.mjs';
 
@@ -137,5 +137,13 @@ try{
   assert.ok(seen.nodes.some(n=>n.node==='Split Structure ItemInstance'&&n.out.out1==='count'));
   assert.ok(seen.nodes.some(n=>n.node==='Modify Structure ItemInstance'&&n.in.count===99&&n.in['set count']==='True (1)'));
   assert.ok(seen.nodes.some(n=>n.node==='Get Custom Variable'&&n.out?.out0==='Dictionary<Integer, ItemInstance>'));
+  // A dictionary from integers to texts with no structure: the block a creator's `accepts` (player template, 100..105 ->
+  // head..weapon, 2026-11-22) holds, kept as its sum; neither reader takes it for a structure variable.
+  const accepts=textDictBlock({name:'accepts',type:'dict',value:{100:'head',101:'chest',102:'legs',103:'feet',104:'hands',105:'weapon'}},m=>{throw new Error(m);});
+  assert.equal(accepts.length,265);
+  assert.equal(createHash('sha256').update(accepts).digest('hex'),'848c981db2b86594564c03cb001dbc7fee55708502f469ec4d25f5911f0060e1');
+  assert.equal(structVariableOf(accepts),null);
+  assert.equal(structVariablesNamed(accepts,['accepts']).size,0);
+  assert.throws(()=>textDictBlock({name:'bad',type:'dict',value:{x:'head'}},m=>{throw new Error(m);}));
   console.log('scene-struct: ok');
 }finally{fs.rmSync(workspace,{recursive:true,force:true});}

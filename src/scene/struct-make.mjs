@@ -85,11 +85,31 @@ export function structVariableBlock(v,structs,id,bad){
   }
   return Buffer.concat([field(2,2,text(v.name)),field(3,0,type),field(4,2,Buffer.concat([field(1,0,type),field(2,2,tag),body])),field(5,0,1),field(6,2,tag)]);
 }
+// A dictionary from integers to texts, with no structure (read from one a creator made on the player template in the
+// editor, 2026-11-22: `accepts`, 100..105 -> head..weapon): {2: name, 3: 27, 4: {1: 27, 2: {1: 27, 2: {2: 46, 502: 3,
+// 503: 6}}, 37: {501: key..., 502: value..., 503: 3, 504: 6}}, 5: 1, 6: {1: 27, 2: {502: 3}}}, a key {1: 3, 2: {1: 3,
+// 2: {}}, 13: {1: number}} and a value {1: 6, 2: {1: 6, 2: {}}, 16: {1: text}}. 46 is what the editor wrote; its meaning
+// is not known. shortcut: integer keys to texts only, the one kind seen; other value kinds want a sample each.
+const PLAIN_DICT_TAG=tagged(27,Buffer.concat([field(2,0,46),field(502,0,3),field(503,0,6)]));
+export function textDictBlock(v,bad){
+  const map=v.value??{};
+  if(!map||typeof map!=='object'||Array.isArray(map))bad('A dict variable without a structure takes an object from whole-number keys to texts: {"100": "head"}.');
+  const keys=Object.keys(map);
+  if(keys.some(k=>!/^-?\d+$/.test(k)||!FITS.int(Number(k))))bad('A dict variable\'s keys are whole numbers within ±2147483647.',{keys});
+  if(keys.some(k=>!FITS.string(map[k])))bad('A dict variable without a structure takes texts of at most 40 characters as values.',{value:map});
+  const entry=(code,at,x)=>field(code===3?501:502,2,Buffer.concat([field(1,0,code),field(2,2,tagged(code)),field(at,2,scalar(code===3?'int':'string',x))]));
+  const body=field(37,2,Buffer.concat([...keys.map(k=>entry(3,13,Number(k))),...keys.map(k=>entry(6,16,map[k])),field(503,0,3),field(504,0,6)]));
+  return Buffer.concat([field(2,2,text(v.name)),field(3,0,27),field(4,2,Buffer.concat([field(1,0,27),field(2,2,PLAIN_DICT_TAG),body])),field(5,0,1),
+    field(6,2,tagged(27,field(502,0,3)))]);
+}
+// A dictionary variable's block holds a structure when its tag names one (503: 25).
+const holdsStruct=inner=>num(inner,503)===25;
 // A structure variable of a variable block: {type: 'structList' | 'dict', structId}, or null.
 export function structVariableOf(block){
   const type=num(block,3),kind=Object.keys(STRUCT_VARIABLE_TYPES).find(k=>STRUCT_VARIABLE_TYPES[k]===type);
   if(!kind)return null;
   const inner=sub(sub(block,6),2);
+  if(type===27&&!holdsStruct(sub(sub(sub(block,4),2),2)))return null;
   return {type:kind,structId:num(inner,type===26?2:504)};
 }
 // The structure variables of these names anywhere in the save (any template, placed entity or player slot): name ->
@@ -104,7 +124,7 @@ export function structVariablesNamed(root,names){
       if(root[i0]!==0x18||(type!==26&&type!==27)||root[i0+2]!==0x22)continue;
       let len=0,shift=0,i=i0+3;
       for(;;){const b=root[i++];len+=(b&127)*2**shift;shift+=7;if(!(b&128)||shift>35)break;}
-      let structId;try{structId=num(sub(sub(root.subarray(i,i+len),2),2),type===26?2:504);}catch{continue;}
+      let structId;try{const inner=sub(sub(root.subarray(i,i+len),2),2);if(type===27&&!holdsStruct(inner))continue;structId=num(inner,type===26?2:504);}catch{continue;}
       const seen=found.get(name);
       found.set(name,seen&&(seen.type!==type||seen.structId!==structId)?{...seen,conflict:true}:{type,structId});
     }

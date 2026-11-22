@@ -9,7 +9,7 @@ import {fail} from './adapter.mjs';
 import {checkClient,luaSyntaxError} from './client-check.mjs';
 import {imageIdKnown} from './scene/images.mjs';
 import {makeCompositeNode} from './scene/composite-make.mjs';
-import {makeStruct,inspectStructs,structVariableBlock,structVariableOf,freshIds} from './scene/struct-make.mjs';
+import {makeStruct,inspectStructs,structVariableBlock,structVariableOf,freshIds,textDictBlock} from './scene/struct-make.mjs';
 import {SHAPES,EMPTY_MODEL,shapeOf,colorRecord,parseColor} from './scene/shapes.mjs';
 import {render as renderShapes} from './scene/shape-render.mjs';
 
@@ -723,6 +723,7 @@ function tabContent({areas,options}){
 // {3: 8, 4: {1: 8, 2: {1: 8, 2: {}}, 18: {}}, 5: 1, 6: {1: 8, 2: {}}}. A list with start values holds them in field 1
 // of that last block: integers and booleans packed as varints (a negative integer in ten bytes), floats packed as
 // 32-bit floats, texts one field 1 each (read from lists a creator set on a stage entity in the editor, 2026-11-22).
+// A dict with no struct is a dictionary from integers to texts ({"100": "head"}; textDictBlock in scene/struct-make.mjs).
 // A list of a structure (structList) or a dictionary from integers to one (dict) names the structure (struct) and takes
 // start values as structure values; each copy of the variable (template, every placed copy, every player slot) gets
 // numbers of its own for them, as the editor writes it (structVariableBlock in scene/struct-make.mjs).
@@ -730,6 +731,7 @@ const VARIABLE_TYPES={integer:3,boolean:4,float:5,string:6,integerList:8,boolean
 // shapes: {structs: inspectStructs of the save, id: freshIds of the save}, for structList and dict.
 export function variableBlock(v,shapes){
   const type=VARIABLE_TYPES[v.type];
+  if(type===27&&v.struct===undefined&&typeof v.name==='string'&&v.name&&v.name.length<=40)return textDictBlock(v,(message,details={})=>fail('INVALID_VARIABLE',message,{variable:v.name,...details}));
   if(type>11&&typeof v.name==='string'&&v.name&&v.name.length<=40)return structVariableBlock(v,shapes?.structs??[],shapes?.id,(message,details={})=>fail('INVALID_VARIABLE',message,{variable:v.name,...details}));
   if(!type||typeof v.name!=='string'||!v.name||v.name.length>40)fail('INVALID_VARIABLE','A variable is {name, type: '+Object.keys(VARIABLE_TYPES).join(' | ')+', value}.',{variable:v});
   let value=Buffer.alloc(0);const given=v.value;
