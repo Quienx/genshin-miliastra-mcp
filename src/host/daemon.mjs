@@ -51,8 +51,10 @@ const server=http.createServer(async(req,res)=>{
   pending++;
   const operation=queue.then(async()=>{lease.assertOwned();return invokeTool(definitions.get(body.name),body.arguments);});
   queue=operation.catch(()=>{});
-  // A call that keeps this process busy for long lets no heartbeat through: the session is as alive as its call.
-  try {reply(res,200,await operation);}catch{reply(res,503,{error:'CORE_OWNERSHIP_LOST'});}finally{pending--;lastActive=Date.now();if(sessions.has(body.session))sessions.set(body.session,Date.now());}
+  // A call that keeps this process busy for long lets no heartbeat through, of any session: the desktop window's
+  // queued heartbeats arrive only after the next sweep, so every session counts as seen when a call ends (a 16 MB save's
+  // write_graphs blocked the loop 18 s, the window's session was swept and the core shut itself down after the call).
+  try {reply(res,200,await operation);}catch{reply(res,503,{error:'CORE_OWNERSHIP_LOST'});}finally{pending--;lastActive=Date.now();for(const id of sessions.keys())sessions.set(id,Date.now());}
 });
 server.requestTimeout=10000;
 server.headersTimeout=10000;
