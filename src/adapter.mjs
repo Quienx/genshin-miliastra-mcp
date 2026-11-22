@@ -255,8 +255,9 @@ export function toStructNodes(gilBytes,giaBytes){
 // Split is a node of the structure's split definition with its one input (outputs are not stored: a wire names one
 // by its place); Modify a node of its modify definition with the structure, then for each field set its value pin and
 // a yes on its flag pin (the fields not set are left out), and its flow out naming the definition's.
-// shortcut: Set or Add Key Value Pair (948), Remove by Key (1298) and Set Custom Variable of a dictionary are typed by
-// analogy with Query and Get (not seen in an editor save yet); integer keys only; a structure value goes only into the
+// Set or Add Key Value Pair (948) and Remove by Key (1298) are typed by analogy with Query (not read from an editor
+// save) and worked in play (StructProbe_03, 2026-11-22: a key added, a key removed, both read back).
+// shortcut: Set Custom Variable of a whole dictionary is typed by analogy with Get and untried; integer keys only; a structure value goes only into the
 // nodes above (no list length, no list item by index yet): upgrade from a creator's save that uses them.
 const SPLIT_CALL=/^split:(.+)$/,MODIFY_CALL=/^modify:(.+)$/,SPLIT_READ=/^split:(.+):(\d+)$/;
 const SET_CUSTOM_VARIABLE=22,DICT_QUERY=1158,LIST_LOOP=509,DICT_SET=948,DICT_REMOVE=1298;
