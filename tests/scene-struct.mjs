@@ -16,9 +16,10 @@ import {createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {container,fields} from '../src/scene/wire.mjs';
 import {loadGiaProto} from 'genshin-ts/injector/proto';
-import {addStruct,addNotificationQueue,queueRecord,queueAssets,listInterface} from '../src/scene-save.mjs';
-import {structRecord,structDefinitions,inspectStructs} from '../src/scene/struct-make.mjs';
-import {toStructNodes} from '../src/adapter.mjs';
+import {addStruct,addNotificationQueue,queueRecord,queueAssets,listInterface,addComponents,listComponents} from '../src/scene-save.mjs';
+import {structRecord,structDefinitions,inspectStructs,structVariableBlock} from '../src/scene/struct-make.mjs';
+import {toStructNodes,toStructValues,inject} from '../src/adapter.mjs';
+import {readGraph} from '../src/scene/graph-read.mjs';
 
 const dir=path.join(path.dirname(fileURLToPath(import.meta.url)),'fixtures'),workspace=fs.mkdtempSync(path.join(os.tmpdir(),'miliastra-struct-'));
 const sha=b=>createHash('sha256').update(b).digest('hex'),msgs=(b,id)=>fields(b).filter(f=>f.id===id&&f.wire===2).map(f=>f.data);
@@ -72,5 +73,69 @@ try{
   assert.ok(nodes.some(n=>(n.pins??[]).some(p=>p.i1.kind==='OutFlow'&&(p.connects??[]).some(w=>w.id===queueNode.nodeIndex))));
   // A save without that structure is refused.
   assert.throws(()=>toStructNodes(fs.readFileSync(base),gia),/STRUCT_NOT_FOUND|no structure/);
+
+  // Variables that hold structures, as a creator set them on the player template (StructProbe, 2026-11-22): the
+  // editor's blocks of its first copy, with the numbers it gave the four values, as sha256 sums.
+  const item={id:1077936129,name:'ItemInstance',fields:[{name:'itemId',type:'string'},{name:'count',type:'int'},{name:'wear',type:'int'},{name:'element',type:'int'}]};
+  const start={1:{itemId:'wood_id',count:5},2:{itemId:'pickaxe_id',count:1,wear:37,element:1}},bad=m=>{throw new Error(m);};
+  let serial=1073742506;const next=()=>serial++;
+  assert.equal(sha(structVariableBlock({name:'probeDict',type:'dict',struct:'ItemInstance',value:start},[item],next,bad)),'d86cde4f4d53a676f2a6c55ecf53544dd8191016d5bf0054c26647c3f9d64df0','dictionary variable');
+  assert.equal(sha(structVariableBlock({name:'probeList',type:'structList',struct:'ItemInstance',value:Object.values(start)},[item],next,bad)),'5bb69e6aa26185ba8a2db4129ab0908cb9c378deb63d91376a9ef209dac51c16','list variable');
+  const withItem=addStruct({mapPath:base,name:'ItemInstance',fields:item.fields},workspace);
+  const held=addComponents({mapPath:withItem.mapPath,prefab:'player',variables:[{name:'probeDict',type:'dict',struct:'ItemInstance',value:start},{name:'probeList',type:'structList',struct:'ItemInstance',value:Object.values(start)}]},workspace);
+  const copies=listComponents({mapPath:held.mapPath,prefab:'player'}).found;
+  assert.ok(copies.length>1&&copies.every(c=>JSON.stringify(c.variables)===JSON.stringify([{name:'probeDict',type:'dict',struct:'ItemInstance'},{name:'probeList',type:'structList',struct:'ItemInstance'}])),'every copy holds both');
+  { // each copy numbers its values apart, as the editor does: {502: {2: 28, 4: number}}
+    const root=container(fs.readFileSync(held.mapPath)),mark=Buffer.from([0xb2,0x1f,0x08,0x10,0x1c,0x20]),ids=[];
+    for(let at=root.indexOf(mark);at>=0;at=root.indexOf(mark,at+1))ids.push(root.subarray(at+6,at+11).toString('hex'));
+    assert.equal(ids.length,copies.length*4);assert.equal(new Set(ids).size,ids.length,'value numbers are unique');
+  }
+  assert.throws(()=>addComponents({mapPath:withItem.mapPath,prefab:'player',variables:[{name:'x',type:'dict',struct:'ItemInstance',value:{1:{bogus:1}}}]},workspace),/no field bogus/);
+  assert.throws(()=>addComponents({mapPath:withItem.mapPath,prefab:'player',variables:[{name:'x',type:'structList',struct:'Nope'}]},workspace),/no structure/);
+
+  // Structure values in a graph, struct-values-call.gia compiled by the tool from:
+  //   const d = f.getCustomVariable(p, 'probeDict').asDict('int', 'int')
+  //   f.sendSignal('split:ItemInstance', f.queryDictionaryValueByKey(d, 1n))
+  //   f.printString(f.getCustomVariable(p, 'split:ItemInstance:0').asType('str'))
+  //   f.printString(f.dataTypeConversion(f.getCustomVariable(p, 'split:ItemInstance:1').asType('int'), 'str'))
+  //   f.sendSignal('modify:ItemInstance', f.queryDictionaryValueByKey(d, 1n), 'count', 99n)
+  //   f.listIterationLoop(f.getCustomVariable(p, 'probeList').asType('int_list'), it => {
+  //     f.sendSignal('split:ItemInstance', it); f.printString(f.getCustomVariable(e, 'split:ItemInstance:0').asType('str')) })
+  //   f.sendSignal('struct:ItemInstance', 'axe_id', 1n, 0n, 0n)
+  //   f.setOrAddKeyValuePairsToDictionary(d, 3n, f.getCustomVariable(p, 'struct:ItemInstance:0').asType('int'))
+  //   f.removeKeyValuePairsFromDictionaryByKey(d, 2n)
+  // and struct-values-misuse.gia from f.printString(f.dataTypeConversion(f.queryDictionaryValueByKey(d, 1n), 'str')).
+  // The pins checked are those of the creator's graph in StructProbe (types, indexOfConcrete, usingStruct numbers).
+  const heldBytes=fs.readFileSync(held.mapPath),call=fs.readFileSync(path.join(dir,'struct-values-call.gia'));
+  const typedOut=toStructValues(heldBytes,toStructNodes(heldBytes,call)),g2=rootMessage.toObject(rootMessage.decode(typedOut.subarray(20,typedOut.length-4)),opt).graph.graph.inner.graph;
+  const by=id=>g2.nodes.filter(n=>Number(n.genericId.nodeId)===id),pinOf=(n,kind,index=0)=>n.pins.find(p=>p.i1.kind===kind&&(p.i1.index??0)===index);
+  const shape=p=>{const v=p.value?.bConcreteValue,t=v?.value?.itemType?.type_server;return [p.type,v?.indexOfConcrete??0,String(t?.items?.structId??t?.item?.structId)];};
+  const sid=String(withItem.structId),using=n=>[n.usingStruct[0].typeXxx,n.usingStruct[0].alwaysOneXxxx,n.usingStruct[0].structId?String(n.usingStruct[0].structId.structId):null];
+  const [getDict,getList]=['probeDict','probeList'].map(v=>by(50).find(n=>n.pins.some(p=>p.value?.bString?.val===v)));
+  assert.deepEqual([getDict.concreteId,shape(pinOf(getDict,'OutParam')),using(getDict)],[undefined,[27,20,sid],[74,2,null]],'Get of a dictionary');
+  assert.deepEqual([getList.concreteId,shape(pinOf(getList,'OutParam')),using(getList)],[undefined,[26,22,sid],[175,1,sid]],'Get of a list');
+  for(const q of by(1158))assert.deepEqual([q.concreteId,shape(pinOf(q,'InParam')),shape(pinOf(q,'OutParam')),using(q)],[undefined,[27,0,sid],[25,10,sid],[54,2,null]],'Query');
+  const [loop]=by(509);assert.deepEqual([loop.concreteId,shape(pinOf(loop,'InParam')),shape(pinOf(loop,'OutParam')),using(loop)],[undefined,[26,10,sid],[25,10,sid],[10,1,sid]],'loop');
+  const [put]=by(948),[drop]=by(1298);
+  assert.deepEqual([shape(pinOf(put,'InParam')),shape(pinOf(put,'InParam',2)),shape(pinOf(drop,'InParam'))],[[27,0,sid],[25,10,sid],[27,0,sid]],'Set or Add, Remove');
+  const splits=by(withItem.splitId);assert.equal(splits.length,2);
+  for(const s of splits)assert.deepEqual(s.pins.map(p=>[p.i1.kind,p.type,!!p.connects?.length]),[['InParam',25,true]],'Split: the structure alone');
+  assert.equal(pinOf(put,'InParam',2).connects[0].id,by(withItem.assembleId)[0].nodeIndex,'the Assemble node feeds Set or Add');
+  const [modify]=by(withItem.modifyId);
+  assert.deepEqual(modify.pins.map(p=>[p.i1.kind,p.i1.index??0,p.i2.index??0,p.type??null]),[['OutFlow',0,0,null],['InParam',0,0,25],['InParam',4,3,3],['InParam',5,4,4]],'Modify: flow, structure, count and its flag');
+  assert.equal(pinOf(modify,'InParam',4).value.bInt.val,99);assert.equal(pinOf(modify,'InParam',5).value.bEnum.val,1);
+  // The reads are gone, their wires go from the split's outputs.
+  assert.ok(!by(50).some(n=>n.pins.some(p=>/^split:|^struct:/.test(p.value?.bString?.val??''))));
+  assert.ok(g2.nodes.some(n=>n.pins.some(p=>(p.connects??[]).some(w=>w.id===splits[0].nodeIndex&&w.connect.index===1))),'count read from output 1');
+  assert.deepEqual(g2.affiliations.map(a=>[Number(a.info.source.id),a.info.typeXxx,a.type.type]).sort((a,b)=>a[0]-b[0]||a[1]-b[1]),[[50,74,23],[50,175,23],[509,10,8],[948,54,320],[1158,54,320],[1298,54,320]]);
+  // A structure given to anything else, and a graph on a save without the variables, are refused.
+  assert.throws(()=>toStructValues(heldBytes,toStructNodes(heldBytes,fs.readFileSync(path.join(dir,'struct-values-misuse.gia')))),{code:'STRUCT_VALUE_MISUSED'});
+  const bare=fs.readFileSync(withItem.mapPath);
+  assert.throws(()=>toStructValues(bare,toStructNodes(bare,call)),{code:'STRUCT_VALUE_EXPECTED'});
+  // read_graph names the structure's nodes and pins.
+  const injected=inject(heldBytes,call,1073741825,true),[seen]=readGraph(injected,{graphId:1073741825}).graphs;
+  assert.ok(seen.nodes.some(n=>n.node==='Split Structure ItemInstance'&&n.out.out1==='count'));
+  assert.ok(seen.nodes.some(n=>n.node==='Modify Structure ItemInstance'&&n.in.count===99&&n.in['set count']==='True (1)'));
+  assert.ok(seen.nodes.some(n=>n.node==='Get Custom Variable'&&n.out?.out0==='Dictionary<Integer, ItemInstance>'));
   console.log('scene-struct: ok');
 }finally{fs.rmSync(workspace,{recursive:true,force:true});}

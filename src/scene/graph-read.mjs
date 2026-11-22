@@ -7,6 +7,7 @@ import {buildSignalNodeIdMapFromFields} from 'genshin-ts/injector/signal_nodes';
 import {loadGiaProto} from 'genshin-ts/injector/proto';
 import {SPECIAL_NODE_IDS} from 'genshin-ts/compiler/ir_to_gia_transform/mappings';
 import {inspectCompositeNodes} from './composite-nodes.mjs';
+import {inspectStructs} from './struct-make.mjs';
 
 // Reads a node graph of a save the way the editor shows it: every node with its name and every pin with its name and
 // the value written in it, or the node and output it is wired from. For graphs made in the editor (a skill's client
@@ -58,35 +59,42 @@ function value(v){
   for(const k of ['bId','bInt','bFloat'])if(v[k])return Number(v[k].val??0);
   return undefined;
 }
-const typeOf=w=>{const v=w?.bConcreteValue?.value??w,t=v?.itemType?.type_client?.type??v?.itemType?.type_server?.type;return typeof t==='string'?t.replace(/_$/,''):t;};
+// A pin that carries a structure names it: "Struct ItemInstance", "StructList ItemInstance", "Dictionary<Integer, ItemInstance>".
+const typeOf=(w,structs)=>{const v=w?.bConcreteValue?.value??w,server=v?.itemType?.type_server,t=v?.itemType?.type_client?.type??server?.type;
+  const named=id=>structs?.get(Number(id))??'structure '+id;
+  if((t==='Struct'||t==='StructList')&&server?.item?.structId)return t+' '+named(server.item.structId);
+  if(t==='Dictionary'&&Number(server?.items?.value)===25)return 'Dictionary<'+({3:'Integer',6:'String'}[server.items.key]??server.items.key)+', '+named(server.items.structId)+'>';
+  return typeof t==='string'?t.replace(/_$/,''):t;};
 const kindOf=i=>i?.kind??'InFlow';
 
-// Nodes of one graph. signalNames: generic node id -> 'send signal NAME' and the like; composite: id -> name.
-function readNodes(graph,client,signalNames,composite){
+// Nodes of one graph. signalNames: generic node id -> 'send signal NAME' and the like; composite: id -> name;
+// shapes: {structs: id -> name, nodes: definition id -> {node, pins (input names by place), outs}} of the save's structures.
+function readNodes(graph,client,signalNames,composite,shapes={structs:new Map(),nodes:new Map()}){
   return (graph.nodes??[]).map(node=>{
     const gid=Number(node.genericId?.nodeId??0),cid=Number(node.concreteId?.nodeId??0),out={n:node.nodeIndex};
-    let names=[],argPins=null;
+    let names=[],argPins=null,raw=false;
     if(client){
       const m=CLIENT.get(gid+'/'+cid)??CLIENT.get(String(gid));
       if(m){out.node=title(m.nodeType);out.zh=m.displayName;names=CLIENT_ARGS.get(m.nodeType)??[];argPins=m.argPins??null;}
     }else if(composite.has(gid))out.node='composite: '+composite.get(gid);
+    else if(shapes.nodes.has(gid)){const d=shapes.nodes.get(gid);out.node=d.node;names=d.pins;raw=true;if(d.outs)out.out=Object.fromEntries(d.outs.map((n,i)=>['out'+i,n]));}
     else if(signalNames.has(gid))out.node=signalNames.get(gid);
     else{const type=SERVER_TYPE.get(gid);out.node=SERVER_RECORD.get(gid)?.name??(type?title(type):undefined);names=SERVER_ARGS.get(type)??[];}
     out.node??='unknown';out.id=cid&&cid!==gid?gid+'/'+cid:gid;
     if(node.comments?.content)out.comment=node.comments.content;
-    const pinName=i=>{const k=argPins?argPins.indexOf(i):i,n=names[k];return n?words(n):'in'+i;};
+    const pinName=i=>{const k=argPins?argPins.indexOf(i):i,n=names[k];return n?(raw?n:words(n)):'in'+i;};
     const inputs={},outputs={},next={};
     for(const p of node.pins??[]){
       const kind=kindOf(p.i1),i=Number(p.i1?.index??0),wires=p.connects??[];
       if(kind==='OutFlow'){if(wires.length)next[i]=wires.map(c=>c.id);continue;}
       if(kind==='InFlow')continue;
-      if(kind==='OutParam'){outputs['out'+i]=typeOf(p.value);continue;}
+      if(kind==='OutParam'){outputs['out'+i]=typeOf(p.value,shapes.structs);continue;}
       if(kind!=='InParam'){const v=value(p.value);if(v!==undefined&&v!==0&&v!=='')inputs.signal=v;continue;}
       const name=pinName(i);
       inputs[name]=wires.length?'<- #'+wires.map(c=>c.id+(c.connect?.index?'.out'+c.connect.index:'')).join(', #'):value(p.value)??null;
     }
     if(Object.keys(inputs).length)out.in=inputs;
-    if(Object.keys(outputs).length)out.out=outputs;
+    if(Object.keys(outputs).length)out.out={...out.out,...outputs};
     if(Object.keys(next).length)out.next=Object.keys(next).length===1&&next[0]?next[0]:next;
     return out;
   });
@@ -107,10 +115,16 @@ export function readGraph(bytes,{graphId,name}={}){
   const signalNames=new Map();
   for(const [signal,ids] of buildSignalNodeIdMapFromFields(payload,fields))for(const [role,t] of Object.entries(ids))signalNames.set(Number(t.nodeId),role+' '+signal);
   const composite=new Map(inspectCompositeNodes(payload).map(c=>[c.definitionId,c.name]));
+  const structs=inspectStructs(payload),shapes={structs:new Map(structs.map(s=>[s.id,s.name])),nodes:new Map()};
+  for(const s of structs){
+    if(s.assemble)shapes.nodes.set(s.assemble.definitionId,{node:'Assemble Structure '+s.name,pins:s.fields.map(f=>f.name)});
+    if(s.split)shapes.nodes.set(s.split.definitionId,{node:'Split Structure '+s.name,pins:[s.name],outs:s.fields.map(f=>f.name)});
+    if(s.modify)shapes.nodes.set(s.modify.definitionId,{node:'Modify Structure '+s.name,pins:[s.name,'Modify Object',...s.fields.flatMap(f=>[f.name,'set '+f.name])]});
+  }
   return {graphs:found.map(({id,type,graph})=>{
     const client=Number(type)!==20000;
     return {id,name:graph.name??'',type,side:client?'client':'server',nodeCount:graph.nodes?.length??0,
-      nodes:readNodes(graph,client,signalNames,composite)};
+      nodes:readNodes(graph,client,signalNames,composite,shapes)};
   }),
   reading:'n is the node\'s number in the graph; comment: the note shown over the node in the editor; in: each input by name, its value, or "<- #k" when wired from node k (".outJ" its output J); next: the nodes the flow goes on to (by output: 0 true / 1 false for a branch); enum values by name and number; vectors as [x,y,z]; lists as arrays. Names are those of the catalogue the compiler uses and may differ from the editor\'s words.'};
 }

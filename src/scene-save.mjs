@@ -9,7 +9,7 @@ import {fail} from './adapter.mjs';
 import {checkClient,luaSyntaxError} from './client-check.mjs';
 import {imageIdKnown} from './scene/images.mjs';
 import {makeCompositeNode} from './scene/composite-make.mjs';
-import {makeStruct,inspectStructs} from './scene/struct-make.mjs';
+import {makeStruct,inspectStructs,structVariableBlock,structVariableOf,freshIds} from './scene/struct-make.mjs';
 import {SHAPES,EMPTY_MODEL,shapeOf,colorRecord,parseColor} from './scene/shapes.mjs';
 import {render as renderShapes} from './scene/shape-render.mjs';
 
@@ -723,9 +723,14 @@ function tabContent({areas,options}){
 // {3: 8, 4: {1: 8, 2: {1: 8, 2: {}}, 18: {}}, 5: 1, 6: {1: 8, 2: {}}}. A list with start values holds them in field 1
 // of that last block: integers and booleans packed as varints (a negative integer in ten bytes), floats packed as
 // 32-bit floats, texts one field 1 each (read from lists a creator set on a stage entity in the editor, 2026-11-22).
-const VARIABLE_TYPES={integer:3,boolean:4,float:5,string:6,integerList:8,booleanList:9,floatList:10,stringList:11};
-export function variableBlock(v){
+// A list of a structure (structList) or a dictionary from integers to one (dict) names the structure (struct) and takes
+// start values as structure values; each copy of the variable (template, every placed copy, every player slot) gets
+// numbers of its own for them, as the editor writes it (structVariableBlock in scene/struct-make.mjs).
+const VARIABLE_TYPES={integer:3,boolean:4,float:5,string:6,integerList:8,booleanList:9,floatList:10,stringList:11,structList:26,dict:27};
+// shapes: {structs: inspectStructs of the save, id: freshIds of the save}, for structList and dict.
+export function variableBlock(v,shapes){
   const type=VARIABLE_TYPES[v.type];
+  if(type>11&&typeof v.name==='string'&&v.name&&v.name.length<=40)return structVariableBlock(v,shapes?.structs??[],shapes?.id,(message,details={})=>fail('INVALID_VARIABLE',message,{variable:v.name,...details}));
   if(!type||typeof v.name!=='string'||!v.name||v.name.length>40)fail('INVALID_VARIABLE','A variable is {name, type: '+Object.keys(VARIABLE_TYPES).join(' | ')+', value}.',{variable:v});
   let value=Buffer.alloc(0);const given=v.value;
   if(type>6&&given!==undefined){
@@ -952,6 +957,7 @@ function abilityContent(units){
 // 32 in 43: counted over every kind in the official samples).
 const contentField=kind=>kind+(kind<=20?10:11);
 const record=(kind,content)=>Buffer.concat([field(1,0,kind),field(2,0,1),field(contentField(kind),2,content)]);
+const structOf=b=>{const s=structVariableOf(b);return s?{structId:s.structId}:{};};
 function componentSummary(data,layout){
   const out={collisionTriggers:0,options:[],variables:[],motions:[],follow:false,minimapMarker:false,hurtBox:false,launcher:false,extraCollision:false,abilityUnits:[],graphs:[]};
   for(const f of fields(data)){
@@ -970,7 +976,7 @@ function componentSummary(data,layout){
         if(kind===15)out.launcher=fields(body).some(x=>x.id===1&&x.wire===2);
         if(kind===8)out.extraCollision=fields(body).some(x=>x.id===1&&x.wire===2);
         if(kind===17)out.options=fields(body).filter(x=>x.id===2&&x.wire===2).map(o=>({id:varintOf(o.data,1),text:fields(o.data).find(x=>x.id===2&&x.wire===2)?.data.toString('utf8')??''}));
-        if(kind===1)out.variables=fields(body).filter(x=>x.id===1&&x.wire===2).map(v=>({name:fields(v.data).find(x=>x.id===2&&x.wire===2)?.data.toString('utf8')??'',type:Object.keys(VARIABLE_TYPES).find(k=>VARIABLE_TYPES[k]===varintOf(v.data,3))??'other'}));
+        if(kind===1)out.variables=fields(body).filter(x=>x.id===1&&x.wire===2).map(v=>({name:fields(v.data).find(x=>x.id===2&&x.wire===2)?.data.toString('utf8')??'',type:Object.keys(VARIABLE_TYPES).find(k=>VARIABLE_TYPES[k]===varintOf(v.data,3))??'other',...structOf(v.data)}));
       }
       if(f.id===layout.properties&&kindOf(f.data)===14){const list=one(one(f.data,23),1);out.abilityUnits=fields(list).filter(x=>x.id===1&&x.wire===2).map(u=>fields(u.data).find(x=>x.id===4&&x.wire===2)?.data.toString('utf8')??'');}
       if(f.id===layout.components&&kindOf(f.data)===3){
@@ -983,8 +989,10 @@ function componentSummary(data,layout){
 }
 // What a prefab or the placed entities of one name carry: triggers, options, variables and the graphs they run.
 export function listComponents({mapPath,prefab,entity}){
-  const file=resolve(mapPath),found=[];
-  rewriteTargets(container(fs.readFileSync(file)),{prefab,entity},(data,layout)=>{found.push({where:layout===TEMPLATE?'prefab':'placed',...(layout===TEMPLATE?{prefabId:varintOf(data,1)}:{guid:describe(data).guid,name:describe(data).name}),...componentSummary(data,layout)});return data;});
+  const file=resolve(mapPath),found=[],root=container(fs.readFileSync(file)),structs=inspectStructs(root);
+  rewriteTargets(root,{prefab,entity},(data,layout)=>{found.push({where:layout===TEMPLATE?'prefab':'placed',...(layout===TEMPLATE?{prefabId:varintOf(data,1)}:{guid:describe(data).guid,name:describe(data).name}),...componentSummary(data,layout)});return data;});
+  // A structure variable says which structure it holds.
+  for(const v of found.flatMap(f=>f.variables))if(v.structId){v.struct=structs.find(s=>s.id===v.structId)?.name??null;delete v.structId;}
   return {mapPath:file,found};
 }
 // Loot (战利品, general component 37): what a thing leaves behind when it is destroyed, {48: {1: 1, 3: {1: 1, 2: the drop
@@ -1023,7 +1031,8 @@ export function addComponents({mapPath,prefab,entity,collisionTriggers,optionTab
   const file=resolve(mapPath),bytes=fs.readFileSync(file);
   if(collisionTriggers===undefined&&optionTab===undefined&&variables===undefined&&removeVariables===undefined&&motions===undefined&&follow===undefined&&minimapMarker===undefined&&textBubbles===undefined&&nameplates===undefined&&attachPoints===undefined&&hurtBox===undefined&&abilityUnits===undefined&&loot===undefined&&projectile===undefined&&hitDetection===undefined&&launcher===undefined&&forceField===undefined&&extraCollision===undefined&&solid===undefined)fail('NOTHING_TO_ADD','Give collisionTriggers, optionTab, variables, motions, follow, minimapMarker, hurtBox, abilityUnits, launcher, forceField, extraCollision or solid.');
   if(variables){const names=variables.map(v=>v.name);if(new Set(names).size!==names.length)fail('INVALID_VARIABLE','Variable names must differ.',{names});}
-  const triggers=collisionTriggers&&record(5,triggerContent(collisionTriggers)),tab=optionTab&&record(17,tabContent(optionTab)),added=variables?.map(variableBlock);
+  const shapes={structs:inspectStructs(container(bytes)),id:freshIds(container(bytes))},blocks=()=>variables?.map(v=>variableBlock(v,shapes)),added=blocks();
+  const triggers=collisionTriggers&&record(5,triggerContent(collisionTriggers)),tab=optionTab&&record(17,tabContent(optionTab));
   const moving=motions&&record(4,motionContent(motions)),following=follow&&record(9,followContent(follow));
   const marked=minimapMarker&&record(32,markerContent(minimapMarker));
   const points=[...(attachPoints??[]),...pointsAbove(textBubbles,nameplates).filter(p=>!(attachPoints??[]).some(a=>a.name===p.name))];
@@ -1075,7 +1084,7 @@ export function addComponents({mapPath,prefab,entity,collisionTriggers,optionTab
       // Variables already there stay unless one of the new ones has the same name or removeVariables names it.
       const gone=[...(variables??[]).map(v=>v.name),...(removeVariables??[])];
       const body=old&&fields(old).find(f=>f.id===11&&f.wire===2)?.data,kept=body?fields(body).filter(f=>f.id===1&&f.wire===2&&!gone.includes(fields(f.data).find(x=>x.id===2&&x.wire===2)?.data.toString('utf8'))).map(f=>f.raw):[];
-      return record(1,Buffer.concat([...kept,...(added??[]).map(b=>field(1,2,b))]));
+      return record(1,Buffer.concat([...kept,...(blocks()??[]).map(b=>field(1,2,b))]));
     });
     // Component 5 is the native collision: {1: 1, 2: 1} on a solid piece, empty on one that characters walk through
     // (official pickups such as coins have it empty).
