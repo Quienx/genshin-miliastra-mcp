@@ -260,7 +260,13 @@ export function toStructNodes(gilBytes,giaBytes){
 // shortcut: Set Custom Variable of a whole dictionary is typed by analogy with Get and untried; integer keys only; a structure value goes only into the
 // nodes above (no list length, no list item by index yet): upgrade from a creator's save that uses them.
 const SPLIT_CALL=/^split:(.+)$/,MODIFY_CALL=/^modify:(.+)$/,SPLIT_READ=/^split:(.+):(\d+)$/;
-const SET_CUSTOM_VARIABLE=22,DICT_QUERY=1158,LIST_LOOP=509,DICT_SET=948,DICT_REMOVE=1298;
+const SET_CUSTOM_VARIABLE=22,DICT_QUERY=1158,LIST_LOOP=509,DICT_SET=948,DICT_REMOVE=1298,SET_GRAPH_VARIABLE=323,GET_GRAPH_VARIABLE=337;
+// A node graph variable that holds a structure (read from a creator's graph, the user's sample of 2026-11-22: SsSlots'
+// probeSlot): declared in the source as an integer stand-in (g.server({..., variables: {name: 0n}})), it takes the
+// structure of what f.set(name, ...) gives it; its Set and Get pins carry the structure (index 21), both nodes name it
+// with 174/1 and an affiliation of type 1, and the graph's variable entry becomes a structure with empty fields.
+const GRAPH_STRUCT={[SET_GRAPH_VARIABLE]:{pins:[[3,1,25,21]],typeXxx:174,one:1,aff:1},[GET_GRAPH_VARIABLE]:{pins:[[4,0,25,21]],typeXxx:174,one:1,aff:1}};
+const FIELD_SERVER={int:['IntBase','Integer','bInt'],float:['FloatBase','Float','bFloat'],string:['StringBase','String','bString']};
 // node id -> pin type the node is typed by -> {pins: [[pin kind, place, pin type, indexOfConcrete]], usingStruct numbers, affiliation type}
 const STRUCT_TYPED={
   [GET_CUSTOM_VARIABLE]:{27:{pins:[[4,0,27,20]],typeXxx:74,one:2,aff:23},26:{pins:[[4,0,26,22]],typeXxx:175,one:1,aff:23}},
@@ -286,7 +292,7 @@ export function toStructValues(gilBytes,giaBytes){
   const payload=gilBytes.subarray(20,-4),structs=inspectStructs(payload);
   const assembled=new Map(structs.filter(s=>s.assemble).map(s=>[s.assemble.definitionId,s]));
   const built=nodes.filter(n=>assembled.has(idOf(n)));
-  if(!sends.length&&!reads.length&&!built.length&&!named.length)return giaBytes;
+  if(!sends.length&&!reads.length&&!built.length&&!named.length)return giaBytes;   // (a structure graph variable is set from one of these)
   const declared=named.length?structVariablesNamed(payload,named.map(valueName)):new Map(),held=named.filter(n=>declared.has(valueName(n)));
   if(!sends.length&&!reads.length&&!built.length&&!held.length)return giaBytes;
   const Pin=proto.lookupType('NodePin'),Info=proto.lookupType('GraphAffiliation.Info'),Affiliation=proto.lookupType('GraphAffiliation'),Wire=proto.lookupType('NodeConnection');
@@ -333,6 +339,31 @@ export function toStructValues(gilBytes,giaBytes){
       retype(n,spec,got.structId);typed.set(n,got.structId);allowed.add(at(n.nodeIndex,0));changed=true;
       if(idOf(n)===DICT_QUERY||idOf(n)===LIST_LOOP)values.set(at(n.nodeIndex,0),{type:25,structId:got.structId});
     }
+  }
+  // Node graph variables given a structure: each takes that structure, and so do its Get nodes' outputs.
+  const graphVarName=n=>textOf((n.pins??[]).find(p=>p?.i1?.kind===3&&(p.i1.index||0)===0)?.value)?.val??'',graphStructs=new Map();
+  for(const n of nodes)if(idOf(n)===SET_GRAPH_VARIABLE){
+    const got=sourceOf(n,1),name=graphVarName(n);if(!got)continue;
+    if(got.type!==25||(graphStructs.has(name)&&graphStructs.get(name)!==got.structId))fail('STRUCT_VARIABLE_AMBIGUOUS','The node graph variable '+name+' is given different things: one structure only, as f.set(name, <structure>).',{variable:name});
+    graphStructs.set(name,got.structId);
+  }
+  for(const n of nodes)if((idOf(n)===SET_GRAPH_VARIABLE||idOf(n)===GET_GRAPH_VARIABLE)&&graphStructs.has(graphVarName(n))){
+    const structId=graphStructs.get(graphVarName(n));
+    if(idOf(n)===SET_GRAPH_VARIABLE)expect(n,1,25,structId,'Set Node Graph Variable of '+graphVarName(n));
+    retype(n,GRAPH_STRUCT[idOf(n)],structId);
+    if(idOf(n)===GET_GRAPH_VARIABLE)values.set(at(n.nodeIndex,0),{type:25,structId});
+  }
+  if(graphStructs.size){
+    const Variable=proto.lookupType('GraphVariable');
+    graph.graphValues=(graph.graphValues??[]).map(v=>{
+      if(!graphStructs.has(v.name))return v;
+      const structId=graphStructs.get(v.name),s=structs.find(x=>x.id===structId);
+      const items=s.fields.map(f=>{const [cls,type,slot]=FIELD_SERVER[f.type];return {class:cls,alreadySetVal:true,itemType:{classBase:'Server',type_server:{type}},[slot]:{}};});
+      return Variable.fromObject({name:v.name,type:'Struct',structId,keyType:'String',valueType:'String',values:{class:'StructBase',alreadySetVal:true,
+        itemType:{classBase:'Server',type_server:{type:'Struct',kind:'Struct',item:{structId}}},structInfo:{xxx:1,inner:{xxx:1}},bStruct:{items}}});
+    });
+    const missing=[...graphStructs.keys()].find(name=>!graph.graphValues.some(v=>v.name===name));
+    if(missing)fail('STRUCT_VARIABLE_UNDECLARED','The node graph variable '+missing+' is set with a structure but not declared: g.server({..., variables: {'+missing+': 0n}}).',{variable:missing});
   }
   for(const [n,structId] of typed)if(idOf(n)===DICT_SET)expect(n,2,25,structId,'The value of Set or Add Key Value Pair');
   for(const n of held)if(idOf(n)===SET_CUSTOM_VARIABLE){

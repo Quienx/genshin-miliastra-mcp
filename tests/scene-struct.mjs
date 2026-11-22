@@ -132,6 +132,20 @@ try{
   assert.throws(()=>toStructValues(heldBytes,toStructNodes(heldBytes,fs.readFileSync(path.join(dir,'struct-values-misuse.gia')))),{code:'STRUCT_VALUE_MISUSED'});
   const bare=fs.readFileSync(withItem.mapPath);
   assert.throws(()=>toStructValues(bare,toStructNodes(bare,call)),{code:'STRUCT_VALUE_EXPECTED'});
+  // A node graph variable that holds a structure, struct-graph-variable-call.gia compiled by the tool from:
+  //   g.server({id: 1073741825, name: '_GSTS_held', variables: {held: 0n}})
+  //   f.set('held', f.queryDictionaryValueByKey(f.getCustomVariable(p, 'probeDict').asDict('int', 'int'), 1n))
+  //   f.sendSignal('modify:ItemInstance', f.get('held'), 'count', 5n)
+  //   f.sendSignal('split:ItemInstance', f.get('held')); f.printString(f.getCustomVariable(p, 'split:ItemInstance:0').asType('str'))
+  // typed as the editor typed SsSlots' probeSlot in the user's sample (2026-11-22).
+  const held2=toStructValues(heldBytes,toStructNodes(heldBytes,fs.readFileSync(path.join(dir,'struct-graph-variable-call.gia'))));
+  const g3=rootMessage.toObject(rootMessage.decode(held2.subarray(20,held2.length-4)),opt).graph.graph.inner.graph,by3=id=>g3.nodes.filter(n=>Number(n.genericId.nodeId)===id);
+  const [variable]=g3.graphValues;
+  assert.deepEqual([variable.name,variable.type,String(variable.structId),variable.values.bStruct.items.length],['held','Struct',sid,4],'the graph variable is a structure');
+  const [setVar]=by3(323),getVars=by3(337);assert.equal(getVars.length,2);
+  assert.deepEqual([setVar.concreteId,shape(pinOf(setVar,'InParam',1)),using(setVar)],[undefined,[25,21,sid],[174,1,sid]],'Set Node Graph Variable');
+  for(const n of getVars)assert.deepEqual([n.concreteId,shape(pinOf(n,'OutParam')),using(n)],[undefined,[25,21,sid],[174,1,sid]],'Get Node Graph Variable');
+  assert.ok(g3.affiliations.some(a=>Number(a.info.source.id)===323&&a.info.typeXxx===174&&a.type.type===1)&&g3.affiliations.some(a=>Number(a.info.source.id)===337&&a.type.type===1));
   // read_graph names the structure's nodes and pins.
   const injected=inject(heldBytes,call,1073741825,true),[seen]=readGraph(injected,{graphId:1073741825}).graphs;
   assert.ok(seen.nodes.some(n=>n.node==='Split Structure ItemInstance'&&n.out.out1==='count'));
