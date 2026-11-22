@@ -15,6 +15,7 @@ import {inspectSignalContract} from './scene/signal-contract.mjs';
 import {inspectPrefabs} from './scene/prefabs.mjs';
 import {inspectCompositeNodes} from './scene/composite-nodes.mjs';
 import {inspectStructs} from './scene/struct-make.mjs';
+import {eventNodeIds} from './scene/graph-read.mjs';
 
 export const packageRoot = path.dirname(fileURLToPath(import.meta.resolve('genshin-ts/package.json')));
 export const sha = value => createHash('sha256').update(value).digest('hex');
@@ -211,10 +212,45 @@ export function toStructNodes(gilBytes,giaBytes){
   header.writeUInt32BE(payload.length+20,0);header.writeUInt32BE(payload.length,16);
   return Buffer.concat([header,payload,giaBytes.subarray(-4)]);
 }
+// Titles a creator reads in the editor. The compiler drops comments and keeps no source line per node, but a handler is
+// one event node, so a run of `// @title text` lines right above the line of .on('event', ...) or .onSignal(NAME, ...)
+// becomes that event node's note (节点注释), stored as the editor stores one: {content}, no position (read from the
+// official sample 定时器地形, graph "Door Lever"). A signal named by a constant is looked up in the source. Handlers of
+// one event that the compiler kept apart get their titles in order; if it merged them, their titles join on one node.
+const TITLE=/^\s*\/\/\s*@title\b\s?(.*)$/,HANDLER=/\.(on|onSignal)\(\s*(?:(['"`])([^'"`]+)\2|([A-Za-z_$][\w$]*))/,MONITOR_SIGNAL=300001;
+export function withTitles(giaBytes,code){
+  const lines=String(code??'').split('\n'),wanted=[];
+  for(let i=0;i<lines.length;i++){
+    if(!TITLE.test(lines[i]))continue;
+    const text=[];while(i<lines.length&&TITLE.test(lines[i]))text.push(TITLE.exec(lines[i++])[1].trim());
+    while(i<lines.length&&!lines[i].trim())i++;
+    const m=HANDLER.exec(lines[i]??''),title=text.join('\n');
+    if(!m)fail('TITLE_WITHOUT_HANDLER','A // @title line stands right above the line of the handler it names: .on(\'event\', ...) or .onSignal(NAME, ...).',{title,line:i+1});
+    let name=m[3];
+    if(!name){const c=new RegExp('\\b(?:const|let|var)\\s+'+m[4].replace(/\$/g,'\\$')+'\\s*=\\s*([\'"`])([^\'"`]+)\\1').exec(code);
+      if(!c)fail('TITLE_WITHOUT_HANDLER','The signal of a titled handler is a constant the source does not set to a name: const '+m[4]+' = \'NAME\'.',{title,line:i+1});name=c[2];}
+    const ids=m[1]==='onSignal'?null:eventNodeIds(name);
+    if(m[1]==='on'&&!ids)fail('TITLE_WITHOUT_HANDLER','The titled handler\'s event is not a server event the catalogue knows: titles go on server graphs.',{title,event:name,line:i+1});
+    wanted.push({key:m[1]==='onSignal'?'signal '+name:'event '+name,ids,title});
+  }
+  if(!wanted.length)return giaBytes;
+  const {rootMessage}=loadGiaProto(),root=rootMessage.decode(giaBytes.subarray(20,giaBytes.length-4)),graph=root?.graph?.graph?.inner?.graph;
+  const nodes=[...(graph?.nodes??[])].sort((a,b)=>a.nodeIndex-b.nodeIndex);
+  for(const key of new Set(wanted.map(w=>w.key))){
+    const titles=wanted.filter(w=>w.key===key),{ids}=titles[0];
+    const found=nodes.filter(n=>ids?ids.has(Number(n.genericId?.nodeId))||ids.has(Number(n.concreteId?.nodeId)):Number(n.genericId?.nodeId)===MONITOR_SIGNAL&&'signal '+(n.pins??[]).filter(p=>p?.i1?.kind===5).map(p=>textOf(p.value)?.val).find(Boolean)===key);
+    if(!found.length)fail('TITLE_WITHOUT_HANDLER','The compiled graph has no handler of this '+key.split(' ')[0]+' for the title to go on.',{title:titles[0].title,[key.split(' ')[0]]:key.slice(key.indexOf(' ')+1)});
+    if(found.length===titles.length)titles.forEach((t,k)=>{found[k].comments={content:t.title};});
+    else found[0].comments={content:titles.map(t=>t.title).join('\n')};
+  }
+  const payload=Buffer.from(rootMessage.encode(root).finish()),header=Buffer.from(giaBytes.subarray(0,20));
+  header.writeUInt32BE(payload.length+20,0);header.writeUInt32BE(payload.length,16);
+  return Buffer.concat([header,payload,giaBytes.subarray(-4)]);
+}
 function listedSignals(gilBytes){const payload=gilBytes.subarray(20,-4),found=[];parseMessage(payload,0,payload.length,0,0,0,0,0,0,0,found);return [...buildSignalNodeIdMapFromFields(payload,found).keys()];}
-export function inject(bytes, giaBytes, targetId, replaceEditorGraph=false) {
+export function inject(bytes, giaBytes, targetId, replaceEditorGraph=false, code='') {
   // Keep upstream non-empty target checks enabled; never patch arbitrary binary fields.
-  const result=createInjector({lang:'en-US'}).injectBytes({gilBytes:bytes,giaBytes:toEmptyEntities(toStructNodes(bytes,toCompositeNodes(bytes,toClientScriptSignals(bytes,giaBytes)))),targetId,skipNonEmptyCheck:replaceEditorGraph});
+  const result=createInjector({lang:'en-US'}).injectBytes({gilBytes:bytes,giaBytes:toEmptyEntities(toStructNodes(bytes,toCompositeNodes(bytes,toClientScriptSignals(bytes,withTitles(giaBytes,code))))),targetId,skipNonEmptyCheck:replaceEditorGraph});
   inspectBytes(result.bytes);
   return Buffer.from(result.bytes);
 }

@@ -233,7 +233,7 @@ export class Service {
         const target=before.graphs.find(x=>x.id===g.graphId);
         if(!target)fail('MISSING_GRAPH','Target graph does not exist in the destination. Create/save it in the editor.',{targetGraphId:g.graphId,availableGraphs:before.graphs});
         if(!target.writable&&!g.replaceEditorGraph)fail('UNSAFE_TARGET','Target is non-empty and not managed by _GSTS: a graph made in the editor. replaceEditorGraph: true on this graph writes over it (read it first with read_graph).',{graph:target});
-        bytes=inject(bytes,gia,g.graphId,!!g.replaceEditorGraph);
+        bytes=inject(bytes,gia,g.graphId,!!g.replaceEditorGraph,g.code);
         fs.copyFileSync(gias[i],path.join(dir,'builds',g.graphId+'.gia'));
         written.push({graphId:g.graphId,projectId,limits,warnings});
       }catch(e){failed={graphId:g.graphId,position:i,code:e.code??'ERROR',message:e.message,details:e.details};break;}
@@ -262,7 +262,7 @@ export class Service {
     const graph=before.graphs.find(g=>g.id===build.graph.id);
     if(!graph)fail('MISSING_GRAPH','Target graph does not exist in the destination. Create/save it in the editor.',{targetGraphId:build.graph.id,availableGraphs:before.graphs});
     if(!graph.writable&&!replaceEditorGraph)fail('UNSAFE_TARGET','Target is non-empty and not managed by _GSTS.',{graph});
-    const candidate=inject(bytes,gia,build.graph.id,replaceEditorGraph),after=inspectBytes(candidate);
+    const candidate=inject(bytes,gia,build.graph.id,replaceEditorGraph,fs.readFileSync(path.join(dir,'src','main.ts'),'utf8')),after=inspectBytes(candidate);
     return {projectId,buildId,destination,target,expectedSha256:before.sha256,resultSha256:after.sha256,bytesBefore:before.bytes,bytesAfter:after.bytes,graphBefore:graph,graphAfter:after.graphs.find(g=>g.id===build.graph.id),runtimeTest:'not_run',reloadRequired:destination==='live'};
   }
   applyBuild(args) {
@@ -270,7 +270,7 @@ export class Service {
     if(preview.expectedSha256!==args.expectedSha256)fail('MAP_CHANGED','Map changed since preview; preview again.');
     const {dir,build,gia}=this.getBuild(args.projectId,args.buildId),bytes=fs.readFileSync(preview.target);
     if(sha(bytes)!==args.expectedSha256)fail('MAP_CHANGED','Map changed before apply.');
-    const candidate=inject(bytes,gia,build.graph.id,!!args.replaceEditorGraph),backupId=randomUUID();
+    const candidate=inject(bytes,gia,build.graph.id,!!args.replaceEditorGraph,fs.readFileSync(path.join(dir,'src','main.ts'),'utf8')),backupId=randomUUID();
     fs.writeFileSync(path.join(dir,'backups',backupId+'.gil'),bytes,{flag:'wx'});
     const record={backupId,target:preview.target,beforeSha256:sha(bytes),afterSha256:sha(candidate),buildId:args.buildId,createdAt:new Date().toISOString()};
     writeJson(path.join(dir,'backups',backupId+'.json'),record);

@@ -35,6 +35,12 @@ const SERVER_RECORD=new Map(NODE_PIN_RECORDS.map(r=>[r.id,r]));
 const SERVER_TYPE=new Map();
 for(const [key,id] of Object.entries(NODE_ID))if(!SERVER_TYPE.has(id))SERVER_TYPE.set(id,key.replace(/__.*$/,'').toLowerCase());
 for(const [type,id] of Object.entries(SPECIAL_NODE_IDS))SERVER_TYPE.set(id,type);
+// The ids an event's node can have, by the name a graph's source gives the event ('whenEntityIsCreated' -> 71, written
+// When_Entity_Is_Created in the catalogue; 'whenTheCharacterIsDown' -> When_the_Character_Is_Down); a generic event
+// (whenCustomVariableChanges) has one id per type.
+const eventKey=s=>s.replace(/__.*$/,'').replace(/[^A-Za-z0-9]/g,'').toLowerCase(),EVENT_IDS=new Map();
+for(const [key,id] of Object.entries(NODE_ID)){const k=eventKey(key);if(!EVENT_IDS.has(k))EVENT_IDS.set(k,new Set());EVENT_IDS.get(k).add(id);}
+export const eventNodeIds=name=>EVENT_IDS.get(eventKey(name));
 // An enum value is one number across all enums (2902 is only "rotation type: target orientation").
 const ENUM=new Map();
 for(const [name,v] of Object.entries(CLIENT_ENUM_VALUES))if(typeof v==='number')ENUM.set(v,name);
@@ -67,6 +73,7 @@ function readNodes(graph,client,signalNames,composite){
     else if(signalNames.has(gid))out.node=signalNames.get(gid);
     else{const type=SERVER_TYPE.get(gid);out.node=SERVER_RECORD.get(gid)?.name??(type?title(type):undefined);names=SERVER_ARGS.get(type)??[];}
     out.node??='unknown';out.id=cid&&cid!==gid?gid+'/'+cid:gid;
+    if(node.comments?.content)out.comment=node.comments.content;
     const pinName=i=>{const k=argPins?argPins.indexOf(i):i,n=names[k];return n?words(n):'in'+i;};
     const inputs={},outputs={},next={};
     for(const p of node.pins??[]){
@@ -105,5 +112,5 @@ export function readGraph(bytes,{graphId,name}={}){
     return {id,name:graph.name??'',type,side:client?'client':'server',nodeCount:graph.nodes?.length??0,
       nodes:readNodes(graph,client,signalNames,composite)};
   }),
-  reading:'n is the node\'s number in the graph; in: each input by name, its value, or "<- #k" when wired from node k (".outJ" its output J); next: the nodes the flow goes on to (by output: 0 true / 1 false for a branch); enum values by name and number; vectors as [x,y,z]; lists as arrays. Names are those of the catalogue the compiler uses and may differ from the editor\'s words.'};
+  reading:'n is the node\'s number in the graph; comment: the note shown over the node in the editor; in: each input by name, its value, or "<- #k" when wired from node k (".outJ" its output J); next: the nodes the flow goes on to (by output: 0 true / 1 false for a branch); enum values by name and number; vectors as [x,y,z]; lists as arrays. Names are those of the catalogue the compiler uses and may differ from the editor\'s words.'};
 }
