@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {container,fields} from '../src/scene/wire.mjs';
-import {addPrefab,addGraph,addComponents,listComponents,launcherContent,nameplateContent,bubbleContent} from '../src/scene-save.mjs';
+import {addPrefab,addGraph,addComponents,listComponents,launcherContent,nameplateContent,bubbleContent,variableBlock} from '../src/scene-save.mjs';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'),workspace=fs.mkdtempSync(path.join(os.tmpdir(),'miliastra-components-'));
 const sample=path.join(root,'knowledge','samples','gil',fs.readdirSync(path.join(root,'knowledge','samples','gil')).find(f=>f.startsWith('mhumsn9uap96_')));
@@ -41,10 +41,21 @@ try{
   const stored=file=>[4,5].flatMap(part=>messages(container(fs.readFileSync(file)),part)).flatMap(s=>messages(s,1)).flatMap(e=>[...messages(e,7),...messages(e,8)]).filter(r=>kind(r)===1).flatMap(r=>messages(r,11)).flatMap(b=>messages(b,1)).find(v=>messages(v,2)[0]?.toString('utf8')==='积分值列表');
   assert.ok(stored(flow),'the official sample no longer holds the list 积分值列表');assert.ok(stored(lists.mapPath).equals(stored(flow)),'the integer list differs from the official one');
   assert.deepEqual(listComponents({mapPath:lists.mapPath,prefab:'t_coin'}).found[0].variables.filter(v=>v.type.endsWith('List')),[{name:'积分值列表',type:'integerList'},{name:'names',type:'stringList'}]);
-  assert.throws(()=>addComponents({mapPath:made.mapPath,prefab:'t_coin',variables:[{name:'full',type:'integerList',value:3}]},workspace),/starts empty/);
+  assert.throws(()=>addComponents({mapPath:made.mapPath,prefab:'t_coin',variables:[{name:'full',type:'integerList',value:3}]},workspace),/array of its kind/);
+  assert.throws(()=>addComponents({mapPath:made.mapPath,prefab:'t_coin',variables:[{name:'full',type:'integerList',value:[1.5]}]},workspace),/array of its kind/);
+  // Lists with start values, byte for byte as the editor stored them on a stage entity (a creator's save, 2026-11-22).
+  for(const [v,hex] of [
+    [{name:'tInts',type:'integerList',value:[2,300,-5]},'120574496e74731808221a080812040808120092010f0a0d02ac02fbffffffffffffffff012801320408081200'],
+    [{name:'tStrs',type:'stringList',value:['a','ab']},'12057453747273180b2212080b1204080b1200aa01070a01610a02616228013204080b1200'],
+    [{name:'tFloats',type:'floatList',value:[2,1.5]},'120774466c6f617473180a2215080a1204080a1200a2010a0a08000000400000c03f28013204080a1200'],
+    [{name:'tBools',type:'booleanList',value:[false,true]},'120674426f6f6c731809220f08091204080912009a01040a0200012801320408091200'],
+    [{name:'tLong',type:'integerList',value:[999999999]},'1205744c6f6e671808221208081204080812009201070a05ff93ebdc032801320408081200'],
+  ])assert.equal(variableBlock(v).toString('hex'),hex,v.name);
   // removeVariables takes the named ones off and leaves the rest, in one call with new ones too.
   const fewer=addComponents({mapPath:lists.mapPath,prefab:'t_coin',removeVariables:['extra','积分值列表','never_there'],variables:[{name:'kept',type:'integer'}]},workspace);
   assert.deepEqual(listComponents({mapPath:fewer.mapPath,prefab:'t_coin'}).found[0].variables.map(v=>v.name).sort(),['kept','label','names','on','ratio','score']);
+  const table=addComponents({mapPath:fewer.mapPath,prefab:'t_coin',variables:[{name:'table',type:'integerList',value:[1,2,300]}]},workspace);
+  assert.ok(listComponents({mapPath:table.mapPath,prefab:'t_coin'}).found[0].variables.some(v=>v.name==='table'&&v.type==='integerList'),'a list with start values is written');
 
   const first=addGraph({mapPath:made.mapPath,name:'coin_pick',attachToPrefab:'t_coin'},workspace),second=addGraph({mapPath:first.mapPath,name:'coin_more',attachToPrefab:'t_coin'},workspace);
   assert.deepEqual(listComponents({mapPath:second.mapPath,prefab:'t_coin'}).found[0].graphs,[first.graphId,second.graphId]);
