@@ -135,10 +135,10 @@ try{
  assert.throws(()=>addGraph({mapPath:added.mapPath,graphId:1073741999},dir),{code:'GRAPH_NOT_FOUND'});
  // Taken off the stage, attached again: the stage's component 3 is as the first attach wrote it.
  const off=addGraph({mapPath:added.mapPath,graphId:1073741825,detach:true,outputName:'off'},dir);
- const comp=file=>fields(fields(fields(container(fs.readFileSync(file))).find(f=>f.id===5).data)[0].data).filter(f=>f.id===6)[1].data.toString('hex');
- assert.equal(comp(off.mapPath),'08036a00','no graph named any more');
+ const stageMounts=file=>fields(fields(fields(container(fs.readFileSync(file))).find(f=>f.id===5).data)[0].data).filter(f=>f.id===6)[1].data.toString('hex');
+ assert.equal(stageMounts(off.mapPath),'08036a00','no graph named any more');
  assert.throws(()=>addGraph({mapPath:off.mapPath,graphId:1073741825,detach:true},dir),{code:'NOT_ATTACHED'});
- assert.equal(comp(addGraph({mapPath:off.mapPath,graphId:1073741825,outputName:'on'},dir).mapPath),'08036a110a0f0a0d0801108180808004a81fa09c01','attached again as before');
+ assert.equal(stageMounts(addGraph({mapPath:off.mapPath,graphId:1073741825,outputName:'on'},dir).mapPath),'08036a110a0f0a0d0801108180808004a81fa09c01','attached again as before');
  const stub=path.join(dir,'stub.gil');fs.writeFileSync(stub,Buffer.alloc(89));
  assert.throws(()=>listPrefabs({mapPath:stub}),{code:'SAVE_NOT_WRITTEN'});
 }finally{fs.rmSync(dir,{recursive:true,force:true});}
