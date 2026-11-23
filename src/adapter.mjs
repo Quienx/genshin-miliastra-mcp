@@ -412,7 +412,7 @@ export function toStructValues(gilBytes,giaBytes){
     const field=call?.s.fields[Number(place)],made=(r.pins??[]).find(p=>p?.i1?.kind===4)?.type;
     if(!call)fail('STRUCT_OUTPUT',"A field of a structure is read after the split that gives it: write f.sendSignal('split:"+name+"', <structure>) first.",{read:valueName(r)});
     if(!field)fail('STRUCT_OUTPUT','The structure '+name+' has '+call.s.fields.length+' field(s), counted from 0: '+call.s.fields.map((f,i)=>i+' '+f.name).join(', ')+'.',{read:valueName(r)});
-    if(made!==STRUCT_FIELD_TYPES[field.type][0])fail('STRUCT_OUTPUT','The field '+field.name+' is a '+field.type+": read it with .asType('"+{int:'int',float:'float',string:'str'}[field.type]+"').",{read:valueName(r)});
+    if(made!==STRUCT_FIELD_TYPES[field.type][0])fail('STRUCT_OUTPUT','The field '+field.name+' is a '+field.type+": read it with .asType('"+{int:'int',float:'float',string:'str',config:'config_id',prefab:'prefab_id'}[field.type]+"').",{read:valueName(r)});
     rewire(graph,r,call.node,Number(place));
   }
   graph.nodes=nodes.filter(n=>!reads.includes(n));
