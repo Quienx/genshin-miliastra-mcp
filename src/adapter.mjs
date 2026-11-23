@@ -269,8 +269,8 @@ const GRAPH_STRUCT={[SET_GRAPH_VARIABLE]:{pins:[[3,1,25,21]],typeXxx:174,one:1,a
 const FIELD_SERVER={int:['IntBase','Integer','bInt'],float:['FloatBase','Float','bFloat'],string:['StringBase','String','bString']};
 // node id -> pin type the node is typed by -> {pins: [[pin kind, place, pin type, indexOfConcrete]], usingStruct numbers, affiliation type}
 const STRUCT_TYPED={
-  [GET_CUSTOM_VARIABLE]:{27:{pins:[[4,0,27,20]],typeXxx:74,one:2,aff:23},26:{pins:[[4,0,26,22]],typeXxx:175,one:1,aff:23}},
-  [SET_CUSTOM_VARIABLE]:{27:{pins:[[3,2,27,20]],typeXxx:74,one:2,aff:27},26:{pins:[[3,2,26,22]],typeXxx:175,one:1,aff:27}},
+  [GET_CUSTOM_VARIABLE]:{27:{pins:[[4,0,27,20]],typeXxx:74,one:2,aff:23},26:{pins:[[4,0,26,22]],typeXxx:175,one:1,aff:23},25:{pins:[[4,0,25,21]],typeXxx:174,one:1,aff:23}},
+  [SET_CUSTOM_VARIABLE]:{27:{pins:[[3,2,27,20]],typeXxx:74,one:2,aff:27},26:{pins:[[3,2,26,22]],typeXxx:175,one:1,aff:27},25:{pins:[[3,2,25,21]],typeXxx:174,one:1,aff:27}},
   [DICT_QUERY]:{27:{pins:[[3,0,27,0],[4,0,25,10]],typeXxx:54,one:2,aff:320}},
   [LIST_LOOP]:{26:{pins:[[3,0,26,10],[4,0,25,10]],typeXxx:10,one:1,aff:8}},
   [DICT_SET]:{27:{pins:[[3,0,27,0],[3,2,25,10]],typeXxx:54,one:2,aff:320}},
@@ -328,6 +328,15 @@ export function toStructValues(gilBytes,giaBytes){
     if(v.conflict)fail('STRUCT_VARIABLE_AMBIGUOUS','Two variables of this name hold different things in this save: give them different names.',{variable:valueName(n)});
     retype(n,STRUCT_TYPED[idOf(n)][v.type],v.structId);
     if(idOf(n)===GET_CUSTOM_VARIABLE)values.set(at(n.nodeIndex,0),{type:v.type,structId:v.structId});
+  }
+  // A variable of one structure (25, read from the user's slot0 / slot1, 2026-11-23) read by a name worked out in the
+  // graph (its name pin wired, not a text): a Get whose output a split or a modify takes holds that structure.
+  for(const send of sends){
+    const [,name]=SPLIT_CALL.exec(called(send))??MODIFY_CALL.exec(called(send)),w=input(send,0)?.connects?.[0];
+    if(!w||w.connect?.kind!==4)continue;
+    const g=nodes.find(x=>x.nodeIndex===w.id);
+    if(!g||idOf(g)!==GET_CUSTOM_VARIABLE||valueName(g)||!input(g,1)?.connects?.length||values.has(at(g.nodeIndex,0)))continue;
+    const s=structNamed(name);retype(g,STRUCT_TYPED[GET_CUSTOM_VARIABLE][25],s.id);values.set(at(g.nodeIndex,0),{type:25,structId:s.id});
   }
   // The dictionary and list nodes they feed, then the nodes those feed, until nothing changes.
   const generic=nodes.filter(n=>[DICT_QUERY,LIST_LOOP,DICT_SET,DICT_REMOVE].includes(idOf(n))),typed=new Map();

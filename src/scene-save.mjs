@@ -727,7 +727,7 @@ function tabContent({areas,options}){
 // A list of a structure (structList) or a dictionary from integers to one (dict) names the structure (struct) and takes
 // start values as structure values; each copy of the variable (template, every placed copy, every player slot) gets
 // numbers of its own for them, as the editor writes it (structVariableBlock in scene/struct-make.mjs).
-const VARIABLE_TYPES={integer:3,boolean:4,float:5,string:6,integerList:8,booleanList:9,floatList:10,stringList:11,structList:26,dict:27};
+const VARIABLE_TYPES={integer:3,boolean:4,float:5,string:6,integerList:8,booleanList:9,floatList:10,stringList:11,struct:25,structList:26,dict:27};
 // shapes: {structs: inspectStructs of the save, id: freshIds of the save}, for structList and dict.
 export function variableBlock(v,shapes){
   const type=VARIABLE_TYPES[v.type];

@@ -82,6 +82,11 @@ try{
   assert.equal(sha(structVariableBlock({name:'probeDict',type:'dict',struct:'ItemInstance',value:start},[item],next,bad)),'d86cde4f4d53a676f2a6c55ecf53544dd8191016d5bf0054c26647c3f9d64df0','dictionary variable');
   assert.equal(sha(structVariableBlock({name:'probeList',type:'structList',struct:'ItemInstance',value:Object.values(start)},[item],next,bad)),'5bb69e6aa26185ba8a2db4129ab0908cb9c378deb63d91376a9ef209dac51c16','list variable');
   const withItem=addStruct({mapPath:base,name:'ItemInstance',fields:item.fields},workspace);
+  // One structure (struct): its value is a dictionary's structure value, read from the user's slot1 (2026-11-23):
+  // {2: name, 3: 25, 4: {1: 25, 2: tag, 35: fields}, 5: 1, 6: {1: 25, 2: {1: 1, 2: structure id}}}; read back as such.
+  const one=structVariableBlock({name:'probeOne',type:'struct',struct:'ItemInstance',value:start[1]},[item],next,bad);
+  assert.deepEqual(structVariableOf(one),{type:'struct',structId:item.id},'one structure');
+  assert.equal(one.subarray(0,13).toString('hex'),'120870726f62654f6e65181922','its name, then type 25 and its value');
   const held=addComponents({mapPath:withItem.mapPath,prefab:'player',variables:[{name:'probeDict',type:'dict',struct:'ItemInstance',value:start},{name:'probeList',type:'structList',struct:'ItemInstance',value:Object.values(start)}]},workspace);
   const copies=listComponents({mapPath:held.mapPath,prefab:'player'}).found;
   assert.ok(copies.length>1&&copies.every(c=>JSON.stringify(c.variables)===JSON.stringify([{name:'probeDict',type:'dict',struct:'ItemInstance'},{name:'probeList',type:'structList',struct:'ItemInstance'}])),'every copy holds both');

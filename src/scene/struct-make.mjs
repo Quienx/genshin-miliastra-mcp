@@ -46,7 +46,7 @@ function nodesOf(payload,structId){
 // structure value is {1: 25, 2: {1: 25, 2: {1: 1, 2: id}}, 35: {1: field..., 501: id, 502: {2: 28, 4: a number of its
 // own, found nowhere else in the save}}}, a field {1: type, 2: {1: type, 2: {}}, at: {1: value} ({} for 0 or ''), 501: name}.
 // shortcut: integer keys, and lists / dictionaries only (no variable of one structure): what the probe holds.
-const DICT_TAG=1090519041,STRUCT_VARIABLE_TYPES={structList:26,dict:27};
+const DICT_TAG=1090519041,STRUCT_VARIABLE_TYPES={struct:25,structList:26,dict:27};
 const f32=n=>{const b=Buffer.alloc(4);b.writeFloatLE(n);return b;};
 const tagged=(code,inner=Buffer.alloc(0))=>Buffer.concat([field(1,0,code),field(2,2,inner)]);
 const scalar=(type,x)=>!x?Buffer.alloc(0):type==='int'?field(1,0,BigInt.asUintN(64,BigInt(x))):type==='float'?field(1,5,f32(x)):field(1,2,text(x));
@@ -68,6 +68,9 @@ export function structVariableBlock(v,structs,id,bad){
   const type=STRUCT_VARIABLE_TYPES[v.type],s=structs.find(x=>x.name===v.struct);
   if(!s)bad('The save has no structure '+JSON.stringify(v.struct??null)+': a '+v.type+' variable names one (struct), made with scene_add_struct.',{structs:structs.map(x=>x.name)});
   if(s.fields.some(f=>!STRUCT_FIELD_TYPES[f.type]))bad('The structure '+s.name+' has a field of a kind this tool cannot write a value of.',{fields:s.fields});
+  // One structure (read from slot0 / slot1 a creator made on a player in the editor, 2026-11-23): the variable's value
+  // is the very structure value a dictionary holds, {1: 25, 2: its tag, 35: fields}, and its tag {1: 25, 2: {1: 1, 2: id}}.
+  if(type===25)return Buffer.concat([field(2,2,text(v.name)),field(3,0,25),field(4,2,structValue(s,v.value??{},id,bad)),field(5,0,1),field(6,2,tagged(25,Buffer.concat([field(1,0,1),field(2,0,s.id)])))]);
   const tag=type===26?tagged(26,Buffer.concat([field(1,0,1),field(2,0,s.id)])):tagged(27,Buffer.concat([field(1,0,1),field(2,0,DICT_TAG),field(502,0,3),field(503,0,25),field(504,0,s.id)]));
   let body;
   if(type===26){
@@ -110,7 +113,7 @@ export function structVariableOf(block){
   if(!kind)return null;
   const inner=sub(sub(block,6),2);
   if(type===27&&!holdsStruct(sub(sub(sub(block,4),2),2)))return null;
-  return {type:kind,structId:num(inner,type===26?2:504)};
+  return {type:kind,structId:num(inner,type===27?504:2)};
 }
 // The structure variables of these names anywhere in the save (any template, placed entity or player slot): name ->
 // {type: 26 | 27, structId}, or {conflict: true} when two of one name hold different things. Found by the bytes a
@@ -121,10 +124,10 @@ export function structVariablesNamed(root,names){
     const key=field(2,2,text(name));
     for(let at=root.indexOf(key);at>=0;at=root.indexOf(key,at+1)){
       const i0=at+key.length,type=root[i0+1];
-      if(root[i0]!==0x18||(type!==26&&type!==27)||root[i0+2]!==0x22)continue;
+      if(root[i0]!==0x18||(type!==25&&type!==26&&type!==27)||root[i0+2]!==0x22)continue;
       let len=0,shift=0,i=i0+3;
       for(;;){const b=root[i++];len+=(b&127)*2**shift;shift+=7;if(!(b&128)||shift>35)break;}
-      let structId;try{const inner=sub(sub(root.subarray(i,i+len),2),2);if(type===27&&!holdsStruct(inner))continue;structId=num(inner,type===26?2:504);}catch{continue;}
+      let structId;try{const inner=sub(sub(root.subarray(i,i+len),2),2);if(type===27&&!holdsStruct(inner))continue;structId=num(inner,type===27?504:2);}catch{continue;}
       const seen=found.get(name);
       found.set(name,seen&&(seen.type!==type||seen.structId!==structId)?{...seen,conflict:true}:{type,structId});
     }
