@@ -625,12 +625,15 @@ const GRAPH_KINDS={server:{type:20000,tab:4,tag:800},item:{type:20005,tab:20,tag
 const CLIENT_GRAPH_BASE=1082130432,SERVER_GRAPH_BASE=1073741824;
 const GRAPH_ENTRY={item:"g.server({id, name, type:'item'}).on('whenItemsInTheInventoryAreUsed',(evt,f)=>{...})",boolFilter:"g.boolFilter({id, name, prefix:false}).on('start',(evt,f)=>condition)",characterSkill:"g.characterSkill({id, name, prefix:false}).on('start',(evt,f)=>{...})",
   creatureSkill:"g.creationSkill({id, name, prefix:false}).on('start',(evt,f)=>{...})",creatureStatus:"g.creationStatus({id, name, prefix:false}).on('start1',(evt,f)=>{...})",creatureDecision:"g.creationStatusDecision({id, name, prefix:false}).on('start1',(evt,f)=>{...})"};
-export function addGraph({mapPath,name='_GSTS_Main',kind='server',attachTo,attachToPrefab,outputName},workspace){
+export function addGraph({mapPath,name='_GSTS_Main',kind='server',attachTo,attachToPrefab,graphId:given,outputName},workspace){
   const file=resolve(mapPath),bytes=fs.readFileSync(file);let root=container(bytes);
   const spec=GRAPH_KINDS[kind];
   if(!spec)fail('INVALID_GRAPH_KIND','kind is one of '+Object.keys(GRAPH_KINDS).join(', ')+'.',{kind});
-  const client=kind!=='server'&&kind!=='item',loose=client||kind==='item',label=name.startsWith('_GSTS')?name:'_GSTS_'+name,existing=graphRecords(root);
-  if(existing.some(g=>g.name===label))fail('DUPLICATE_GRAPH_NAME','The save already has a graph with this name; use it as targetGraphId.',{name:label,graphId:existing.find(g=>g.name===label).graphId});
+  const client=kind!=='server'&&kind!=='item',loose=client||kind==='item',existing=graphRecords(root),label=given!==undefined?existing.find(g=>g.graphId===given)?.name??name:name.startsWith('_GSTS')?name:'_GSTS_'+name;
+  // graphId: a server graph the save has already, attached to more entities (one that was taken off the stage in the
+  // editor, put back): nothing is made, only the mounts are written.
+  if(given!==undefined&&(kind!=='server'||!existing.some(g=>g.graphId===given&&g.graphId<=CLIENT_GRAPH_BASE)))fail('GRAPH_NOT_FOUND','graphId names a server graph of the save (inspect_map lists them).',{graphId:given});
+  if(given===undefined&&existing.some(g=>g.name===label))fail('DUPLICATE_GRAPH_NAME','The save already has a graph with this name; use it as targetGraphId.',{name:label,graphId:existing.find(g=>g.name===label).graphId});
   const sections=fields(root);
   if(sections.filter(f=>f.id===10&&f.wire===2).length!==1||sections.filter(f=>f.id===6&&f.wire===2).length!==1)fail('UNSUPPORTED_SAVE','The save does not have the node graph sections this tool knows.');
   if(attachTo!==undefined&&attachToPrefab!==undefined)fail('INVALID_TARGET','Give attachTo (a placed entity) or attachToPrefab, not both.');
@@ -640,7 +643,8 @@ export function addGraph({mapPath,name='_GSTS_Main',kind='server',attachTo,attac
   if(new Set(prefabList).size!==prefabList.length)fail('INVALID_TARGET','attachToPrefab names the same prefab twice.',{attachToPrefab});
   const targets=loose?[]:prefabList.length?prefabList.map(prefab=>({prefab})):[{entity:attachTo??'stage'}];
   const ofSort=existing.filter(g=>client?g.graphId>CLIENT_GRAPH_BASE:g.graphId<=CLIENT_GRAPH_BASE).map(g=>g.graphId);
-  let graphId=Math.max(client?CLIENT_GRAPH_BASE:SERVER_GRAPH_BASE,...ofSort)+1;
+  const graphId=given??Math.max(client?CLIENT_GRAPH_BASE:SERVER_GRAPH_BASE,...ofSort)+1;
+  if(given===undefined){
   const graph=Buffer.concat([field(1,2,Buffer.concat([field(1,0,10000),field(2,0,spec.type),field(3,0,21001),field(5,0,graphId)])),field(2,2,Buffer.from(label,'utf8')),client?field(100,0,1):Buffer.alloc(0)]);
   // The new group goes after the groups already there and before the section's other fields.
   const parts=fields(one(root,10)),groups=parts.filter(f=>f.id===1),rest=parts.filter(f=>f.id!==1);
@@ -653,6 +657,7 @@ export function addGraph({mapPath,name='_GSTS_Main',kind='server',attachTo,attac
     const newTab=Buffer.concat(fields(tab[0].data).map(f=>f.id===3&&f.wire===2?field(3,2,Buffer.concat([f.data,listed])):f.raw));
     root=replace(root,6,2,Buffer.concat(tabs.map(t=>t===tab[0]?field(1,2,newTab):t.raw)));
   }
+  }
   if(kind==='item'){
     const out=output(workspace,file,outputName,'-graph');fs.writeFileSync(out,wrap(bytes,root));
     return {mapPath:out,source:file,graphId,name:label,kind,
@@ -664,12 +669,14 @@ export function addGraph({mapPath,name='_GSTS_Main',kind='server',attachTo,attac
       next:'write_graphs {mapPath: this mapPath, graphs: [{graphId: '+graphId+', code}]}; the source is '+GRAPH_ENTRY[kind]+' with id '+graphId+' and name \''+label+'\'. search_node_docs with scope "raw" finds what a client graph can call. '+(kind==='boolFilter'?'Then name it in an option: scene_add_components optionTab.options[].filterGraphId '+graphId+' (the option shows only while the filter is true).':'Wiring this graph to a skill or a creature has no tool yet.')+' Client graphs written this way have compiled but have not been run in the game.'};
   }
   // An entity runs every graph named in its component 3, one {1: {1: locator}} per graph (official saves carry up to six).
-  const mount=field(1,2,field(1,2,Buffer.concat([field(1,0,1),field(2,0,graphId),field(501,0,20000)])));
+  const locator=Buffer.concat([field(1,0,1),field(2,0,graphId),field(501,0,20000)]),mount=field(1,2,field(1,2,locator));
   const done={prefabIds:[],templates:0,placed:0};
   for(const target of targets){
     const one=rewriteTargets(root,target,(data,layout)=>{
       if(!fields(data).some(f=>f.id===layout.components&&f.wire===2&&kindOf(f.data)===3))fail('UNSUPPORTED_ENTITY','This entity cannot carry a node graph (static pieces cannot).',target);
-      return setBlock(data,layout.components,3,old=>Buffer.concat([field(1,0,3),field(13,2,Buffer.concat([fields(old).find(f=>f.id===13&&f.wire===2)?.data??Buffer.alloc(0),mount]))]));
+      return setBlock(data,layout.components,3,old=>{const had=fields(old).find(f=>f.id===13&&f.wire===2)?.data??Buffer.alloc(0);
+        if(had.includes(locator))fail('ALREADY_ATTACHED','This entity runs this graph already.',{...target,graphId});
+        return Buffer.concat([field(1,0,3),field(13,2,Buffer.concat([had,mount]))]);});
     });
     root=one.root;done.prefabIds.push(...one.prefabIds);done.templates+=one.templates;done.placed+=one.placed;
     if(target.entity!==undefined&&one.placed!==1)fail('ENTITY_NOT_FOUND','Several placed entities have this name; attach to their prefab (attachToPrefab) or rename them.',target);

@@ -130,6 +130,9 @@ try{
  const twice=fields(fields(fields(fields(container(fs.readFileSync(second.mapPath))).find(f=>f.id===5).data)[0].data).filter(f=>f.id===6)[1].data).find(f=>f.id===13);
  assert.equal(fields(twice.data).length,2,'both graphs are named in component 3');
  assert.throws(()=>addGraph({mapPath:blankFile,attachTo:'nobody'},dir),{code:'ENTITY_NOT_FOUND'});
+ // A graph the save has, attached again: refused where it runs already, and an unknown one is refused.
+ assert.throws(()=>addGraph({mapPath:added.mapPath,graphId:1073741825},dir),{code:'ALREADY_ATTACHED'});
+ assert.throws(()=>addGraph({mapPath:added.mapPath,graphId:1073741999},dir),{code:'GRAPH_NOT_FOUND'});
  const stub=path.join(dir,'stub.gil');fs.writeFileSync(stub,Buffer.alloc(89));
  assert.throws(()=>listPrefabs({mapPath:stub}),{code:'SAVE_NOT_WRITTEN'});
 }finally{fs.rmSync(dir,{recursive:true,force:true});}
