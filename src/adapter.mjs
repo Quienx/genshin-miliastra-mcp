@@ -367,6 +367,7 @@ export function toStructValues(gilBytes,giaBytes){
     graph.graphValues=(graph.graphValues??[]).map(v=>{
       if(!graphStructs.has(v.name))return v;
       const structId=graphStructs.get(v.name),s=structs.find(x=>x.id===structId);
+      if(s.fields.some(f=>!FIELD_SERVER[f.type]))fail('STRUCT_GRAPH_VARIABLE','A node graph variable holds a structure of int, float and string fields only (the kinds seen); '+s.name+' has '+s.fields.filter(f=>!FIELD_SERVER[f.type]).map(f=>f.name+' ('+f.type+')').join(', ')+'.',{struct:s.name});
       const items=s.fields.map(f=>{const [cls,type,slot]=FIELD_SERVER[f.type];return {class:cls,alreadySetVal:true,itemType:{classBase:'Server',type_server:{type}},[slot]:{}};});
       return Variable.fromObject({name:v.name,type:'Struct',structId,keyType:'String',valueType:'String',values:{class:'StructBase',alreadySetVal:true,
         itemType:{classBase:'Server',type_server:{type:'Struct',kind:'Struct',item:{structId}}},structInfo:{xxx:1,inner:{xxx:1}},bStruct:{items}}});
@@ -412,7 +413,8 @@ export function toStructValues(gilBytes,giaBytes){
     const field=call?.s.fields[Number(place)],made=(r.pins??[]).find(p=>p?.i1?.kind===4)?.type;
     if(!call)fail('STRUCT_OUTPUT',"A field of a structure is read after the split that gives it: write f.sendSignal('split:"+name+"', <structure>) first.",{read:valueName(r)});
     if(!field)fail('STRUCT_OUTPUT','The structure '+name+' has '+call.s.fields.length+' field(s), counted from 0: '+call.s.fields.map((f,i)=>i+' '+f.name).join(', ')+'.',{read:valueName(r)});
-    if(made!==STRUCT_FIELD_TYPES[field.type][0])fail('STRUCT_OUTPUT','The field '+field.name+' is a '+field.type+": read it with .asType('"+{int:'int',float:'float',string:'str',config:'config_id',prefab:'prefab_id'}[field.type]+"').",{read:valueName(r)});
+    const reads={int:'int',float:'float',string:'str',config:'config_id',prefab:'prefab_id'};
+    if(made!==STRUCT_FIELD_TYPES[field.type][0])fail('STRUCT_OUTPUT','The field '+field.name+' is a '+field.type+': read it with '+(field.type==='dict'?".asDict('"+reads[field.key]+"','"+reads[field.value]+"')":".asType('"+reads[field.type]+"')")+'.',{read:valueName(r)});
     rewire(graph,r,call.node,Number(place));
   }
   graph.nodes=nodes.filter(n=>!reads.includes(n));

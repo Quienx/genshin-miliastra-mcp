@@ -27,11 +27,17 @@ const walk=b=>{let fs_;try{fs_=fields(b);}catch{return;}
 walk(payload);
 for(const b of blocks.filter((x,i)=>blocks.findIndex(y=>y.equals(x))===i)){
   const v=structVariableOf(b),st=all.find(x=>x.id===v.structId),name=messages(b,2)[0].toString('utf8'),ids=[];
-  const body=messages(messages(b,4)[0],v.type==='dict'?37:36)[0];
-  const read=x=>{const f35=messages(x,35)[0];ids.push(num(messages(f35,502)[0],4));
-    return Object.fromEntries(messages(f35,1).map(f=>{const n=messages(f,501)[0].toString('utf8'),t=st.fields.find(y=>y.name===n).type,at=messages(f,{int:13,float:15,string:16}[t])[0];
-      const raw=at&&fields(at).find(y=>y.id===1);return [n,!raw?(t==='string'?'':0):t==='string'?raw.data.toString('utf8'):t==='float'?raw.data.readFloatLE(0):Number(BigInt.asIntN(64,raw.value))];}));};
-  const value=v.type==='dict'?Object.fromEntries(messages(body,501).map((k,i)=>{const raw=fields(messages(k,13)[0]).find(y=>y.id===1);return [String(raw?Number(BigInt.asIntN(64,raw.value)):0),read(messages(body,502)[i])];})):messages(body,1).map(read);
+  const body=v.type==='struct'?messages(b,4)[0]:messages(messages(b,4)[0],v.type==='dict'?37:36)[0];
+  // A scalar {at: {1: x}}; a dictionary field's pairs give their fresh numbers before the structure's own (the writer's order).
+  const scalar=(f,t)=>{const at=messages(f,{int:13,float:15,string:16,config:30,prefab:31}[t])[0],raw=at&&fields(at).find(y=>y.id===1);
+    return !raw?(t==='string'?'':0):t==='string'?raw.data.toString('utf8'):t==='float'?raw.data.readFloatLE(0):t==='config'||t==='prefab'?num(raw.data,2):Number(BigInt.asIntN(64,raw.value));};
+  const read=x=>{const f35=messages(x,35)[0];
+    const out=Object.fromEntries(messages(f35,1).map(f=>{const n=messages(f,501)[0].toString('utf8'),d=st.fields.find(y=>y.name===n);
+      if(d.type!=='dict')return [n,scalar(f,d.type)];
+      const m=messages(f,37)[0];for(const pair of messages(m,1))ids.push(num(messages(messages(pair,35)[0],502)[0],4));
+      return [n,Object.fromEntries(messages(m,501).map((k,i)=>[scalar(k,d.key),scalar(messages(m,502)[i],d.value)]))];}));
+    ids.push(num(messages(f35,502)[0],4));return out;};
+  const value=v.type==='struct'?read(body):v.type==='dict'?Object.fromEntries(messages(body,501).map((k,i)=>{const raw=fields(messages(k,13)[0]).find(y=>y.id===1);return [String(raw?Number(BigInt.asIntN(64,raw.value)):0),read(messages(body,502)[i])];})):messages(body,1).map(read);
   let k=0;const mine=structVariableBlock({name,type:v.type,struct:st.name,value},all,()=>ids[k++],m=>{throw new Error(m);});
   console.log("variable",name,v.type,st.name,ids.join(","),mine.equals(b)?'SAME':'DIFFERENT\n mine '+mine.toString('hex')+'\n save '+b.toString('hex'));
 }

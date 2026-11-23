@@ -94,6 +94,20 @@ try{
   assert.ok(idBlock.includes(Buffer.from([0xf2,0x01,0x0a,0x0a,0x08,0x08,0x01,0x10,0x81,0x80,0x80,0x8c,0x04])),'the attack in field 30, a reference {1: 1, 2: id}');
   assert.ok(idBlock.includes(Buffer.from([0xfa,0x01,0x0a,0x0a,0x08,0x08,0x01,0x10,0xd5,0x80,0x80,0x82,0x04])),'the prefab in field 31, the same shape');
   assert.throws(()=>structVariableBlock({name:'x',type:'struct',struct:'Def',value:{attack:-1}},[ids],next,bad),/configuration id/);
+  // A dictionary field (string -> int), as the editor wrote RecipeDefinition after a creator turned cost1 into cost and
+  // set craft_axe's to {Wood: 3, stone: 5} (2026-11-23): the record (places kept: 1, 2, 3, 7, 8, 9) and the variable's
+  // block, numbered as the editor numbered it (the pairs, then the structure), as sha256 sums of the editor's bytes.
+  const recipe={id:1077936133,name:'RecipeDefinition',fields:[{name:'gives',type:'string',place:1},{name:'count',type:'int',place:2},
+    {name:'cost',type:'dict',key:'string',value:'int',place:3},{name:'age',type:'int',place:7},{name:'at',type:'string',place:8},{name:'old',type:'string',place:9}]};
+  assert.equal(sha(structRecord({id:recipe.id,name:recipe.name,list:recipe.fields,counter:6})),'04a30051fb7ff2a70586c17e87353beb048ebb54da03c153bd7a98d1a8d76822','record with a dictionary field');
+  const numbers=[1077432724,1077432725,1077393154];
+  assert.equal(sha(structVariableBlock({name:'craft_axe',type:'struct',struct:'RecipeDefinition',value:{gives:'tool_axe',count:1,cost:{Wood:3,stone:5},age:1,at:'table'}},[recipe],()=>numbers.shift(),bad)),
+    '4bc1ca75dd0d59cad63c0e45c457c92a61cb0495ba83db8aafddaa734701cb86','a dictionary field\'s value');
+  assert.throws(()=>structVariableBlock({name:'x',type:'struct',struct:'RecipeDefinition',value:{cost:{wood:'three'}}},[recipe],next,bad),/string keys to int values/);
+  { // made by scene_add_struct and read back with its kinds
+    const madeDict=addStruct({mapPath:base,name:'Recipe',outputName:'dict-field',fields:[{name:'gives',type:'string'},{name:'cost',type:'dict',key:'string',value:'int'}]},workspace);
+    assert.deepEqual(inspectStructs(container(fs.readFileSync(madeDict.mapPath))).map(x=>x.fields),[[{name:'gives',type:'string',place:1},{name:'cost',type:'dict',key:'string',value:'int',place:2}]]);
+  }
   const held=addComponents({mapPath:withItem.mapPath,prefab:'player',variables:[{name:'probeDict',type:'dict',struct:'ItemInstance',value:start},{name:'probeList',type:'structList',struct:'ItemInstance',value:Object.values(start)}]},workspace);
   const copies=listComponents({mapPath:held.mapPath,prefab:'player'}).found;
   assert.ok(copies.length>1&&copies.every(c=>JSON.stringify(c.variables)===JSON.stringify([{name:'probeDict',type:'dict',struct:'ItemInstance'},{name:'probeList',type:'structList',struct:'ItemInstance'}])),'every copy holds both');
