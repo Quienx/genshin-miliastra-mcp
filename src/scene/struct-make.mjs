@@ -14,9 +14,9 @@ import {loadGiaProto} from 'genshin-ts/injector/proto';
 // naming the definition's (compositePinIndex), with no flow pins (see toStructNodes in adapter.mjs).
 const BASE=1610612736,STRUCT_BASE=0x40400000;
 // type: [server VarType, client VarType, VarBase class, the field number of a default in the structure record]
-// [server type, client type, value class, field of the value]. config and prefab (a Configuration ID, a Prefab ID) are
-// inferred, not read from an editor's save (2026-11-23): their codes 20 / 21 and 18 / 19 and class IdBase are the
-// format's own (VarType, ClientVarType, VarBase.Class), the value's field 10 + type as for every kind seen.
+// [server type, client type, value class, field of the value]. config and prefab (a Configuration ID, a Prefab ID): codes
+// 20 / 21 and 18 / 19 and class IdBase from the format (VarType, ClientVarType, VarBase.Class); the value's field 10 + type
+// and its shape {1: {1: 1, 2: id}} read from a value the user set in the editor (config; prefab by analogy, 2026-11-23).
 export const STRUCT_FIELD_TYPES={int:[3,3,'IntBase',13],float:[5,7,'FloatBase',15],string:[6,9,'StringBase',16],config:[20,18,'IdBase',30],prefab:[21,19,'IdBase',31]};
 const CLIENT_KINDS=['BooleanFilter','Skills','CreationStatusDecision'];
 const messages=(b,id)=>fields(b).filter(f=>f.id===id&&f.wire===2).map(f=>f.data);
@@ -52,7 +52,9 @@ function nodesOf(payload,structId){
 const DICT_TAG=1090519041,STRUCT_VARIABLE_TYPES={struct:25,structList:26,dict:27};
 const f32=n=>{const b=Buffer.alloc(4);b.writeFloatLE(n);return b;};
 const tagged=(code,inner=Buffer.alloc(0))=>Buffer.concat([field(1,0,code),field(2,2,inner)]);
-const scalar=(type,x)=>!x?Buffer.alloc(0):type==='int'||type==='config'||type==='prefab'?field(1,0,BigInt.asUintN(64,BigInt(x))):type==='float'?field(1,5,f32(x)):field(1,2,text(x));
+// An id (config, prefab) is a reference {1: 1, 2: id}, and none an empty one {1: {}}, as the editor wrote the user's
+// sword_bronze (2026-11-23).
+const scalar=(type,x)=>type==='config'||type==='prefab'?field(1,2,x?Buffer.concat([field(1,0,1),field(2,0,BigInt(x))]):Buffer.alloc(0)):!x?Buffer.alloc(0):type==='int'?field(1,0,BigInt.asUintN(64,BigInt(x))):type==='float'?field(1,5,f32(x)):field(1,2,text(x));
 const ID=x=>(typeof x==='number'||typeof x==='bigint')&&Number.isInteger(Number(x))&&Number(x)>=0&&Number(x)<=4294967295;
 const FITS={config:ID,prefab:ID,int:x=>(typeof x==='number'||typeof x==='bigint')&&Number.isInteger(Number(x))&&Math.abs(Number(x))<=2147483647,float:Number.isFinite,string:x=>typeof x==='string'&&x.length<=40};
 const SAYS={config:'a configuration id (a whole number)',prefab:'a prefab id (a whole number)',int:'a whole number within ±2147483647',float:'a number',string:'a text of at most 40 characters'};

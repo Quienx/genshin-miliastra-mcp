@@ -91,8 +91,8 @@ try{
   // field 10 + type): a value goes in field 30 / 31 of its field, as a whole number in field 1.
   const ids={id:1077936140,name:'Def',fields:[{name:'attack',type:'config'},{name:'own',type:'prefab'}]};
   const idBlock=structVariableBlock({name:'probeDef',type:'struct',struct:'Def',value:{attack:1098907649,own:1077936213}},[ids],next,bad);
-  assert.ok(idBlock.includes(Buffer.from([0xf2,0x01,0x06,0x08,0x81,0x80,0x80,0x8c,0x04])),'the attack in field 30');
-  assert.ok(idBlock.includes(Buffer.from([0xfa,0x01,0x06,0x08,0xd5,0x80,0x80,0x82,0x04])),'the prefab in field 31');
+  assert.ok(idBlock.includes(Buffer.from([0xf2,0x01,0x0a,0x0a,0x08,0x08,0x01,0x10,0x81,0x80,0x80,0x8c,0x04])),'the attack in field 30, a reference {1: 1, 2: id}');
+  assert.ok(idBlock.includes(Buffer.from([0xfa,0x01,0x0a,0x0a,0x08,0x08,0x01,0x10,0xd5,0x80,0x80,0x82,0x04])),'the prefab in field 31, the same shape');
   assert.throws(()=>structVariableBlock({name:'x',type:'struct',struct:'Def',value:{attack:-1}},[ids],next,bad),/configuration id/);
   const held=addComponents({mapPath:withItem.mapPath,prefab:'player',variables:[{name:'probeDict',type:'dict',struct:'ItemInstance',value:start},{name:'probeList',type:'structList',struct:'ItemInstance',value:Object.values(start)}]},workspace);
   const copies=listComponents({mapPath:held.mapPath,prefab:'player'}).found;
