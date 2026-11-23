@@ -625,13 +625,14 @@ const GRAPH_KINDS={server:{type:20000,tab:4,tag:800},item:{type:20005,tab:20,tag
 const CLIENT_GRAPH_BASE=1082130432,SERVER_GRAPH_BASE=1073741824;
 const GRAPH_ENTRY={item:"g.server({id, name, type:'item'}).on('whenItemsInTheInventoryAreUsed',(evt,f)=>{...})",boolFilter:"g.boolFilter({id, name, prefix:false}).on('start',(evt,f)=>condition)",characterSkill:"g.characterSkill({id, name, prefix:false}).on('start',(evt,f)=>{...})",
   creatureSkill:"g.creationSkill({id, name, prefix:false}).on('start',(evt,f)=>{...})",creatureStatus:"g.creationStatus({id, name, prefix:false}).on('start1',(evt,f)=>{...})",creatureDecision:"g.creationStatusDecision({id, name, prefix:false}).on('start1',(evt,f)=>{...})"};
-export function addGraph({mapPath,name='_GSTS_Main',kind='server',attachTo,attachToPrefab,graphId:given,outputName},workspace){
+export function addGraph({mapPath,name='_GSTS_Main',kind='server',attachTo,attachToPrefab,graphId:given,detach=false,outputName},workspace){
   const file=resolve(mapPath),bytes=fs.readFileSync(file);let root=container(bytes);
   const spec=GRAPH_KINDS[kind];
   if(!spec)fail('INVALID_GRAPH_KIND','kind is one of '+Object.keys(GRAPH_KINDS).join(', ')+'.',{kind});
   const client=kind!=='server'&&kind!=='item',loose=client||kind==='item',existing=graphRecords(root),label=given!==undefined?existing.find(g=>g.graphId===given)?.name??name:name.startsWith('_GSTS')?name:'_GSTS_'+name;
   // graphId: a server graph the save has already, attached to more entities (one that was taken off the stage in the
   // editor, put back): nothing is made, only the mounts are written.
+  if(detach&&given===undefined)fail('INVALID_TARGET','detach takes graphId: the graph to take off attachTo / attachToPrefab.');
   if(given!==undefined&&(kind!=='server'||!existing.some(g=>g.graphId===given&&g.graphId<=CLIENT_GRAPH_BASE)))fail('GRAPH_NOT_FOUND','graphId names a server graph of the save (inspect_map lists them).',{graphId:given});
   if(given===undefined&&existing.some(g=>g.name===label))fail('DUPLICATE_GRAPH_NAME','The save already has a graph with this name; use it as targetGraphId.',{name:label,graphId:existing.find(g=>g.name===label).graphId});
   const sections=fields(root);
@@ -675,6 +676,9 @@ export function addGraph({mapPath,name='_GSTS_Main',kind='server',attachTo,attac
     const one=rewriteTargets(root,target,(data,layout)=>{
       if(!fields(data).some(f=>f.id===layout.components&&f.wire===2&&kindOf(f.data)===3))fail('UNSUPPORTED_ENTITY','This entity cannot carry a node graph (static pieces cannot).',target);
       return setBlock(data,layout.components,3,old=>{const had=fields(old).find(f=>f.id===13&&f.wire===2)?.data??Buffer.alloc(0);
+        // detach: the graph taken off this entity (its other mounts and the graph itself stay).
+        if(detach){if(!had.includes(locator))fail('NOT_ATTACHED','This entity does not run this graph.',{...target,graphId});
+          return Buffer.concat([field(1,0,3),field(13,2,Buffer.concat(fields(had).filter(f=>!f.data.includes(locator)).map(f=>f.raw)))]);}
         if(had.includes(locator))fail('ALREADY_ATTACHED','This entity runs this graph already.',{...target,graphId});
         return Buffer.concat([field(1,0,3),field(13,2,Buffer.concat([had,mount]))]);});
     });
