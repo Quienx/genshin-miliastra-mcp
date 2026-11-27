@@ -729,8 +729,8 @@ export function addGraph({mapPath,name='_GSTS_Main',kind='server',attachTo,attac
 //   types 3 integer, 4 boolean, 5 float, 6 string.
 const TARGET_KINDS={character:0,object:1,creature:2};
 const xyz=v=>Buffer.concat(v.map((n,i)=>n?field(i+1,5,f32(n)):Buffer.alloc(0)));
-function areaBlock(a,i,code){
-  const label=[field(502,2,Buffer.from('区域'+(i+1),'utf8')),field(503,0,i+1)],centre=a.offset??[0,0,0];
+function areaBlock(a,i,code,name='区域'){
+  const label=[field(502,2,Buffer.from(name+(i+1),'utf8')),field(503,0,i+1)],centre=a.offset??[0,0,0];
   if(!Array.isArray(centre)||centre.length!==3||!centre.every(Number.isFinite))fail(code,'offset is [x, y, z] from the centre of the entity.',{area:a});
   if(a.radius!==undefined){
     if(a.size!==undefined||!(a.radius>0&&a.radius<=500))fail(code,'An area has either size [x, y, z] (a box) or radius (a sphere), up to 500.',{area:a});
@@ -738,8 +738,14 @@ function areaBlock(a,i,code){
   }
   const size=typeof a.size==='number'?[a.size,a.size,a.size]:a.size;
   if(!Array.isArray(size)||size.length!==3||!size.every(n=>n>0&&n<=500))fail(code,'An area has either size [x, y, z] (a box) or radius (a sphere), up to 500.',{area:a});
-  return Buffer.concat([field(11,2,Buffer.concat([field(1,2,xyz(centre)),field(2,2,xyz(size)),field(3,2,Buffer.alloc(0))])),...label]);
+  return Buffer.concat([field(11,2,Buffer.concat([field(1,2,xyz(centre)),field(2,2,xyz(size)),field(3,2,a.rotation?xyz(a.rotation):Buffer.alloc(0))])),...label]);
 }
+// 41 pathfinding obstacle (寻路阻挡): {1: {1: obstacle id, 2: 1 when effective from the start, 502: {501: area...}}...}; the area is a
+// box like a trigger's but labelled "Area n" (read from SS_Wall in a save the editor made; several areas in one obstacle untested).
+const pathObstacleContent=list=>Buffer.concat(list.map((o,i)=>{
+  if(!Array.isArray(o.areas)||!o.areas.length||o.areas.length>8||o.areas.some(a=>a.radius!==undefined))fail('INVALID_PATH_OBSTACLE','A path obstacle needs 1-8 box areas {size, offset, rotation?}.',{obstacle:o});
+  return field(1,2,Buffer.concat([field(1,0,i+1),o.active===false?Buffer.alloc(0):field(2,0,1),field(502,2,Buffer.concat(o.areas.map((a,n)=>field(501,2,areaBlock(a,n,'INVALID_PATH_OBSTACLE','Area '))))) ]));
+}));
 function triggerContent(triggers){
   return Buffer.concat(triggers.map((t,i)=>{
     const wanted=[...new Set(t.targets??['character'])].map(k=>TARGET_KINDS[k]).sort(),left=[0,1,2].filter(k=>!wanted.includes(k));
@@ -1011,6 +1017,7 @@ function componentSummary(data,layout){
         if(kind===5)out.collisionTriggers=fields(body).filter(x=>x.id===1&&x.wire===2).length;
         if(kind===4)out.motions=fields(body).filter(x=>(x.id===1||x.id===3)&&x.wire===2).map(m=>fields(m.data).find(x=>x.id===1&&x.wire===2)?.data.toString('utf8')??'');
         if(kind===9)out.follow=true;
+        if(kind===41)out.pathObstacles=fields(body).filter(x=>x.id===1&&x.wire===2).length;
         if(kind===32)out.minimapMarker=fields(body).some(x=>x.id===501&&x.wire===2);
         if(kind===28){const list=fields(body).filter(x=>x.id===501&&x.wire===2);if(list.length)out.textBubbles=list.map(b=>({number:varintOf(b.data,501),active:varintOf(b.data,502)===1,lines:fields(b.data).filter(x=>x.id===509&&x.wire===2).map(l=>{const w=fields(l.data).find(x=>x.id===503&&x.wire===2);return w?fields(w.data).find(x=>x.id===501&&x.wire===2)?.data.toString('utf8')??'':'';})}));}
         if(kind===21){const list=fields(body).filter(x=>x.id===501&&x.wire===2);if(list.length)out.attachPoints=list.map(p=>fields(p.data).find(x=>x.id===1&&x.wire===2)?.data.toString('utf8')??'');}
@@ -1070,12 +1077,13 @@ export const extraCollisionContent=areas=>field(1,2,Buffer.concat([field(1,0,1),
 export const forceFieldContent=({areas,direction,innerRadius,outerRadius,innerSpeed,outerSpeed})=>Buffer.concat([field(1,2,Buffer.concat([field(1,0,1),...areas.map((a,n)=>field(2,2,areaBlock(a,n,'INVALID_FORCE_FIELD'))),field(3,0,1801),field(5,2,Buffer.alloc(0)),
   field(12,2,Buffer.concat([field(1,2,Buffer.alloc(0)),field(2,0,1811),field(3,2,xyz(direction)),field(5,5,f32(outerRadius)),field(6,5,f32(innerRadius)),field(7,5,f32(outerSpeed)),field(8,5,f32(innerSpeed)),field(501,0,1),field(502,0,1),field(503,0,1),field(504,0,1),field(505,5,f32(outerSpeed)),field(506,5,f32(innerSpeed)),field(507,0,1811)])),
   field(502,0,1),field(503,0,1),field(504,2,Buffer.from('角色扰动装置 序号：1','utf8'))])),field(2,0,1)]);
-export function addComponents({mapPath,prefab,entity,guids,collisionTriggers,optionTab,variables,removeVariables,motions,follow,minimapMarker,textBubbles,nameplates,attachPoints,hurtBox,abilityUnits,loot,projectile,hitDetection,launcher,forceField,extraCollision,solid,outputName},workspace){
+export function addComponents({mapPath,prefab,entity,guids,collisionTriggers,pathObstacles,optionTab,variables,removeVariables,motions,follow,minimapMarker,textBubbles,nameplates,attachPoints,hurtBox,abilityUnits,loot,projectile,hitDetection,launcher,forceField,extraCollision,solid,outputName},workspace){
   const file=resolve(mapPath),bytes=fs.readFileSync(file);
-  if(collisionTriggers===undefined&&optionTab===undefined&&variables===undefined&&removeVariables===undefined&&motions===undefined&&follow===undefined&&minimapMarker===undefined&&textBubbles===undefined&&nameplates===undefined&&attachPoints===undefined&&hurtBox===undefined&&abilityUnits===undefined&&loot===undefined&&projectile===undefined&&hitDetection===undefined&&launcher===undefined&&forceField===undefined&&extraCollision===undefined&&solid===undefined)fail('NOTHING_TO_ADD','Give collisionTriggers, optionTab, variables, motions, follow, minimapMarker, hurtBox, abilityUnits, launcher, forceField, extraCollision or solid.');
+  if(collisionTriggers===undefined&&pathObstacles===undefined&&optionTab===undefined&&variables===undefined&&removeVariables===undefined&&motions===undefined&&follow===undefined&&minimapMarker===undefined&&textBubbles===undefined&&nameplates===undefined&&attachPoints===undefined&&hurtBox===undefined&&abilityUnits===undefined&&loot===undefined&&projectile===undefined&&hitDetection===undefined&&launcher===undefined&&forceField===undefined&&extraCollision===undefined&&solid===undefined)fail('NOTHING_TO_ADD','Give collisionTriggers, pathObstacles, optionTab, variables, motions, follow, minimapMarker, hurtBox, abilityUnits, launcher, forceField, extraCollision or solid.');
   if(variables){const names=variables.map(v=>v.name);if(new Set(names).size!==names.length)fail('INVALID_VARIABLE','Variable names must differ.',{names});}
   const shapes={structs:inspectStructs(container(bytes)),id:freshIds(container(bytes))},blocks=()=>variables?.map(v=>variableBlock(v,shapes)),added=blocks();
   const triggers=collisionTriggers&&record(5,triggerContent(collisionTriggers)),tab=optionTab&&record(17,tabContent(optionTab));
+  const blocking=pathObstacles&&record(41,pathObstacleContent(pathObstacles));
   const moving=motions&&record(4,motionContent(motions)),following=follow&&record(9,followContent(follow));
   const marked=minimapMarker&&record(32,markerContent(minimapMarker));
   const points=[...(attachPoints??[]),...pointsAbove(textBubbles,nameplates).filter(p=>!(attachPoints??[]).some(a=>a.name===p.name))];
@@ -1110,6 +1118,7 @@ export function addComponents({mapPath,prefab,entity,guids,collisionTriggers,opt
     let next=data;
     if(triggers)next=setBlock(next,layout.records,5,()=>triggers);
     if(tab)next=setBlock(next,layout.records,17,()=>tab);
+    if(blocking)next=setBlock(next,layout.records,41,()=>blocking);
     if(moving)next=setBlock(next,layout.records,4,()=>moving);
     if(following)next=setBlock(next,layout.records,9,()=>following);
     if(marked)next=setBlock(next,layout.records,32,()=>marked);
