@@ -8,6 +8,7 @@ import {animationsOf,animationsMayGoOn} from './scene/media.mjs';
 import {fail} from './adapter.mjs';
 import {checkClient,luaSyntaxError} from './client-check.mjs';
 import {imageIdKnown} from './scene/images.mjs';
+import {readPaths,readPatrols,patchPaths} from './scene/paths.mjs';
 import {makeCompositeNode} from './scene/composite-make.mjs';
 import {makeStruct,inspectStructs,structVariableBlock,structVariableOf,freshIds,textDictBlock} from './scene/struct-make.mjs';
 import {SHAPES,EMPTY_MODEL,shapeOf,colorRecord,parseColor} from './scene/shapes.mjs';
@@ -217,6 +218,25 @@ export function listPrefabs({mapPath}){
   const file=resolve(mapPath);
   return {mapPath:file,prefabs:prefabRecords(container(fs.readFileSync(file))).filter(p=>p.kind!=='other'),
     note:'A node graph creates one anywhere with f.createPrefab(prefabId, position, rotation, ownerEntity, false, 1, [] as bigint[]) and finds them with f.getEntitiesWithSpecifiedPrefabOnTheField(prefabId). The entity has the prefab\'s scale. scene_add_prefab makes an object prefab of any asset at any scale.'};
+}
+// Level paths (路径) and creature patrol templates (巡逻模板): read, and edited in place (src/scene/paths.mjs).
+// groundY is the top of the terrain cell under a waypoint (the first terrain of the save), aboveGround the waypoint's y minus it.
+function groundAt(root){
+  let all=[];try{all=pickTerrain(root,undefined).all;}catch(e){all=e.details?.terrains?terrainList(root).entries.filter(f=>f.id===1&&f.wire===2).map(f=>readTerrain(f.data)):[];}
+  // Terrains may overlap: the highest top wins.
+  return (x,z)=>{const tops=all.map(t=>{const c=t.cells.get(Math.round((z-t.origin[2])/CELL_METRES)*65536+Math.round((x-t.origin[0])/CELL_METRES));return c?t.origin[1]+LAYER_METRES*(c[2]||0):null;}).filter(v=>v!==null);return tops.length?Math.round(Math.max(...tops)*1000)/1000:null;};
+}
+export function listPaths({mapPath}){
+  const file=resolve(mapPath),root=container(fs.readFileSync(file)),ground=groundAt(root),names=new Map(prefabRecords(root).map(p=>[p.prefabId,p.name]));
+  const r=n=>Math.round(n*1000)/1000;
+  return {mapPath:file,paths:readPaths(root).map(p=>({...p,waypoints:p.waypoints.map(w=>{const g=ground(w.position[0],w.position[2]);return {...w,groundY:g,aboveGround:g===null?null:r(w.position[1]-g)};})})),
+    patrols:readPatrols(root).map(({block,...p})=>({...p,prefab:names.get(p.prefabId)??null})),
+    note:'index counts from 1 in the order the list shows. speed walk/run is read from codes 3601/3602 (inferred, not matched to the editor by name). Placed copies and the editor cache hold byte-identical copies of a prefab\'s templates; scene_update_paths keeps them equal.'};
+}
+export function updatePaths({mapPath,waypoints,speeds,allRun,outputName},workspace){
+  const file=resolve(mapPath),bytes=fs.readFileSync(file),root=patchPaths(container(bytes),{waypoints,speeds,allRun},fail);
+  const out=output(workspace,file,outputName,'-paths');fs.writeFileSync(out,wrap(bytes,root));
+  return {mapPath:out,source:file,...listPaths({mapPath:out}),next:'Use mapPath in later calls. Only the given values changed; the official save was not touched.'};
 }
 // Prefab groups (元件组) are prefab entries of asset 10008001 (docs/PLATFORM_RULES.zh-CN.md, 2026-11-27). The entry is
 // {1: id, 2: 10008001, 6: name + constant records with kind 61 {65: members} before kind 62, 7/8/9/10: constant}, and the

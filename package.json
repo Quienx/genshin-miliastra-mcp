@@ -70,7 +70,8 @@
     "test:clientui": "node tests/scene-client-ui.mjs",
     "test:shapes": "node tests/scene-shapes.mjs",
     "test:read": "node tests/graph-read.mjs && node tests/empty-entity.mjs && node tests/graph-titles.mjs",
-    "test:terrain": "node tests/scene-terrain.mjs"
+    "test:terrain": "node tests/scene-terrain.mjs",
+    "test:paths": "node tests/scene-paths.mjs"
   },
   "keywords": [
     "mcp",
