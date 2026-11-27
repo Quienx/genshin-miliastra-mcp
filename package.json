@@ -46,6 +46,7 @@
     "test:signal": "node tests/scene-signal.mjs",
     "test:composite": "node tests/scene-composite.mjs",
     "test:struct": "node tests/scene-struct.mjs",
+    "test:guid": "node tests/scene-guid.mjs",
     "test:points": "node tests/scene-points.mjs",
     "test:guide": "node tests/workflow-guide.mjs",
     "test:count": "node tests/editor-count.mjs",

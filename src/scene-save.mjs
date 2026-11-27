@@ -68,6 +68,32 @@ export function listSceneEntities({mapPath,namePrefix='',limit=500}){
     entities:all.slice(0,limit).map(e=>({name:e.name,guid:e.guid,assetId:e.assetId,position:e.position,createdAtStart:e.createdAtStart,kind:isCreature(e.props)?'creature':e.staticUnit?'static':'dynamic'})),
     note:'In a node graph: f.queryEntityByGuid(new guid(GUID)), and f.createEntity(new guid(GUID), [] as bigint[]) for pieces with createdAtStart false. Use this file (or a patched copy) as mapPath for write_graphs so the graph is built on the save that holds these entities.'};
 }
+// Moves placed entities: writes the three floats of the position the list reads (field 6 of kind 1, 11, 1). Rotation and
+// scale are not touched. Several moves of one GUID are refused.
+export function moveEntities({mapPath,moves,outputName},workspace){
+  const file=resolve(mapPath),bytes=fs.readFileSync(file);let root=container(bytes);
+  const guids=moves.map(m=>m.guid);if(new Set(guids).size!==guids.length)fail('INVALID_TARGET','A GUID is given twice.',{guids});
+  const at=new Map(moves.map(m=>[m.guid,m.position])),seen=new Set(),noPosition=[];
+  root=replace(root,5,2,Buffer.concat(fields(one(root,5)).map(f=>{
+    if(f.id!==1||f.wire!==2)return f.raw;
+    const guid=describe(f.data).guid,to=at.get(guid);if(!to)return f.raw;
+    seen.add(guid);let done=false;
+    const data=Buffer.concat(fields(f.data).map(p=>{
+      if(p.id!==6||p.wire!==2||kindOf(p.data)!==1||done)return p.raw;
+      try{
+        const body=one(p.data,11),pos=one(body,1);
+        const newPos=Buffer.concat([...to.map((v,i)=>field(i+1,5,f32(v))),...fields(pos).filter(x=>x.id>3).map(x=>x.raw)]);
+        done=true;return field(6,2,replace(p.data,11,2,replace(body,1,2,newPos)));
+      }catch{return p.raw;}
+    }));
+    if(!done)noPosition.push(guid);return field(1,2,data);
+  })));
+  const missing=guids.filter(g=>!seen.has(g));
+  if(missing.length)fail('ENTITY_NOT_FOUND','No placed entity has these GUIDs. They are listed by scene_list_entities.',{missing});
+  if(noPosition.length)fail('NO_POSITION','These entities have no position block.',{guids:noPosition});
+  const out=output(workspace,file,outputName,'-moved');fs.writeFileSync(out,wrap(bytes,root));
+  return {mapPath:out,source:file,moved:moves.length,next:'Use mapPath in later calls. Rotation and scale were not changed.'};
+}
 // Takes placed entities out of a save: their records in section 5 and the line each has in the library (section 6: a
 // tab lists what belongs to it as {1: code, 2: id}; placed things are in the tab of kind 3 under code 200). A save
 // names the GUID of a placed thing in these two places and nowhere else (checked on saves written by the editor). The entities every map has by itself (the stage entity, the
@@ -584,8 +610,8 @@ const TEMPLATE={properties:6,components:7,records:8},PLACED={properties:5,compon
 // (关卡实体 on the CN client, Stage Entity on the global one, issue #2). Any of these names, or "stage", means it.
 const STAGE_TEMPLATE=10003004,STAGE_NAMES=['stage','关卡实体','Stage Entity'];
 const isStage=entity=>typeof entity==='string'&&STAGE_NAMES.some(n=>n.toLowerCase()===entity.trim().toLowerCase());
-function rewriteTargets(root,{prefab,entity},edit){
-  if((prefab===undefined)===(entity===undefined))fail('INVALID_TARGET','Give either prefab (a prefab name or id, or "player" / "character" for the two built-in templates) or entity (the name of something placed in the save).');
+function rewriteTargets(root,{prefab,entity,guids},edit){
+  if([prefab,entity,guids].filter(x=>x!==undefined).length!==1)fail('INVALID_TARGET','Give one of prefab (a prefab name or id, or "player" / "character" for the two built-in templates), entity (the name of something placed in the save) or guids (GUIDs of placed entities, from scene_list_entities).');
   let templates=0,placed=0,prefabIds=[];
   if(prefab!==undefined){
     const all=prefabRecords(root);
@@ -601,10 +627,11 @@ function rewriteTargets(root,{prefab,entity},edit){
   root=replace(root,5,2,Buffer.concat(fields(one(root,5)).map(f=>{
     if(f.id!==1||f.wire!==2)return f.raw;
     const info=describe(f.data);
-    if(prefab!==undefined?!prefabIds.includes(info.assetId):isStage(entity)?info.assetId!==STAGE_TEMPLATE:info.name!==entity)return f.raw;
+    if(guids?!guids.includes(info.guid):prefab!==undefined?!prefabIds.includes(info.assetId):isStage(entity)?info.assetId!==STAGE_TEMPLATE:info.name!==entity)return f.raw;
     placed++;return field(1,2,edit(f.data,PLACED));
   })));
-  if(!templates&&!placed)fail('ENTITY_NOT_FOUND','Nothing placed in the save has this name. Names are listed by scene_list_entities.',{entity});
+  if(guids){const have=new Set(entries(root).map(e=>describe(e.data).guid)),missing=guids.filter(g=>!have.has(g));if(missing.length)fail('ENTITY_NOT_FOUND','No placed entity has these GUIDs. They are listed by scene_list_entities.',{missing});}
+  else if(!templates&&!placed)fail('ENTITY_NOT_FOUND','Nothing placed in the save has this name. Names are listed by scene_list_entities.',{entity});
   return {root,templates,placed,prefabIds};
 }
 // Replace the block of one kind among the repeated fields `id` of an entry, or add it after the last of them.
@@ -970,6 +997,9 @@ function abilityContent(units){
 // 32 in 43: counted over every kind in the official samples).
 const contentField=kind=>kind+(kind<=20?10:11);
 const record=(kind,content)=>Buffer.concat([field(1,0,kind),field(2,0,1),field(contentField(kind),2,content)]);
+// The value of a basic custom variable ({4: {1: type, 10+type: {1: value}}}); a field left out is the type's zero.
+const valueOf=b=>{try{const t=varintOf(b,3);if(t<3||t>6)return {};const x=fields(one(one(b,4),10+t)).find(y=>y.id===1);
+  return {value:t===3?(x?Number(BigInt.asIntN(64,BigInt(x.value))):0):t===4?!!x:t===5?(x?Math.round(x.data.readFloatLE(0)*1e4)/1e4:0):(x?x.data.toString('utf8'):'')};}catch{return {};}};
 const structOf=b=>{const s=structVariableOf(b);return s?{structId:s.structId}:{};};
 function componentSummary(data,layout){
   const out={collisionTriggers:0,options:[],variables:[],motions:[],follow:false,minimapMarker:false,hurtBox:false,launcher:false,extraCollision:false,abilityUnits:[],graphs:[]};
@@ -989,7 +1019,7 @@ function componentSummary(data,layout){
         if(kind===15)out.launcher=fields(body).some(x=>x.id===1&&x.wire===2);
         if(kind===8)out.extraCollision=fields(body).some(x=>x.id===1&&x.wire===2);
         if(kind===17)out.options=fields(body).filter(x=>x.id===2&&x.wire===2).map(o=>({id:varintOf(o.data,1),text:fields(o.data).find(x=>x.id===2&&x.wire===2)?.data.toString('utf8')??''}));
-        if(kind===1)out.variables=fields(body).filter(x=>x.id===1&&x.wire===2).map(v=>({name:fields(v.data).find(x=>x.id===2&&x.wire===2)?.data.toString('utf8')??'',type:Object.keys(VARIABLE_TYPES).find(k=>VARIABLE_TYPES[k]===varintOf(v.data,3))??'other',...structOf(v.data)}));
+        if(kind===1)out.variables=fields(body).filter(x=>x.id===1&&x.wire===2).map(v=>({name:fields(v.data).find(x=>x.id===2&&x.wire===2)?.data.toString('utf8')??'',type:Object.keys(VARIABLE_TYPES).find(k=>VARIABLE_TYPES[k]===varintOf(v.data,3))??'other',...structOf(v.data),...valueOf(v.data)}));
       }
       if(f.id===layout.properties&&kindOf(f.data)===14){const list=one(one(f.data,23),1);out.abilityUnits=fields(list).filter(x=>x.id===1&&x.wire===2).map(u=>fields(u.data).find(x=>x.id===4&&x.wire===2)?.data.toString('utf8')??'');}
       if(f.id===layout.components&&kindOf(f.data)===3){
@@ -1001,9 +1031,9 @@ function componentSummary(data,layout){
   return out;
 }
 // What a prefab or the placed entities of one name carry: triggers, options, variables and the graphs they run.
-export function listComponents({mapPath,prefab,entity}){
+export function listComponents({mapPath,prefab,entity,guids}){
   const file=resolve(mapPath),found=[],root=container(fs.readFileSync(file)),structs=inspectStructs(root);
-  rewriteTargets(root,{prefab,entity},(data,layout)=>{found.push({where:layout===TEMPLATE?'prefab':'placed',...(layout===TEMPLATE?{prefabId:varintOf(data,1)}:{guid:describe(data).guid,name:describe(data).name}),...componentSummary(data,layout)});return data;});
+  rewriteTargets(root,{prefab,entity,guids},(data,layout)=>{found.push({where:layout===TEMPLATE?'prefab':'placed',...(layout===TEMPLATE?{prefabId:varintOf(data,1)}:{guid:describe(data).guid,name:describe(data).name}),...componentSummary(data,layout)});return data;});
   // A structure variable says which structure it holds.
   for(const v of found.flatMap(f=>f.variables))if(v.structId){v.struct=structs.find(s=>s.id===v.structId)?.name??null;delete v.structId;}
   return {mapPath:file,found};
@@ -1040,7 +1070,7 @@ export const extraCollisionContent=areas=>field(1,2,Buffer.concat([field(1,0,1),
 export const forceFieldContent=({areas,direction,innerRadius,outerRadius,innerSpeed,outerSpeed})=>Buffer.concat([field(1,2,Buffer.concat([field(1,0,1),...areas.map((a,n)=>field(2,2,areaBlock(a,n,'INVALID_FORCE_FIELD'))),field(3,0,1801),field(5,2,Buffer.alloc(0)),
   field(12,2,Buffer.concat([field(1,2,Buffer.alloc(0)),field(2,0,1811),field(3,2,xyz(direction)),field(5,5,f32(outerRadius)),field(6,5,f32(innerRadius)),field(7,5,f32(outerSpeed)),field(8,5,f32(innerSpeed)),field(501,0,1),field(502,0,1),field(503,0,1),field(504,0,1),field(505,5,f32(outerSpeed)),field(506,5,f32(innerSpeed)),field(507,0,1811)])),
   field(502,0,1),field(503,0,1),field(504,2,Buffer.from('角色扰动装置 序号：1','utf8'))])),field(2,0,1)]);
-export function addComponents({mapPath,prefab,entity,collisionTriggers,optionTab,variables,removeVariables,motions,follow,minimapMarker,textBubbles,nameplates,attachPoints,hurtBox,abilityUnits,loot,projectile,hitDetection,launcher,forceField,extraCollision,solid,outputName},workspace){
+export function addComponents({mapPath,prefab,entity,guids,collisionTriggers,optionTab,variables,removeVariables,motions,follow,minimapMarker,textBubbles,nameplates,attachPoints,hurtBox,abilityUnits,loot,projectile,hitDetection,launcher,forceField,extraCollision,solid,outputName},workspace){
   const file=resolve(mapPath),bytes=fs.readFileSync(file);
   if(collisionTriggers===undefined&&optionTab===undefined&&variables===undefined&&removeVariables===undefined&&motions===undefined&&follow===undefined&&minimapMarker===undefined&&textBubbles===undefined&&nameplates===undefined&&attachPoints===undefined&&hurtBox===undefined&&abilityUnits===undefined&&loot===undefined&&projectile===undefined&&hitDetection===undefined&&launcher===undefined&&forceField===undefined&&extraCollision===undefined&&solid===undefined)fail('NOTHING_TO_ADD','Give collisionTriggers, optionTab, variables, motions, follow, minimapMarker, hurtBox, abilityUnits, launcher, forceField, extraCollision or solid.');
   if(variables){const names=variables.map(v=>v.name);if(new Set(names).size!==names.length)fail('INVALID_VARIABLE','Variable names must differ.',{names});}
@@ -1075,7 +1105,7 @@ export function addComponents({mapPath,prefab,entity,collisionTriggers,optionTab
     if(drops.length!==1)fail('PREFAB_NOT_FOUND','loot.dropPrefab is the name or id of a drop prefab: scene_add_prefab {asset, drop: {item}}.',{dropPrefab:loot.dropPrefab});
     left=lootComponent({dropPrefabId:drops[0].prefabId,items:loot.items.map(i=>({itemId:configIdOf(whole,9,'item',i.item),amount:i.amount??1}))});
   }
-  const done=rewriteTargets(container(bytes),{prefab,entity},(data,layout)=>{
+  const done=rewriteTargets(container(bytes),{prefab,entity,guids},(data,layout)=>{
     if(!fields(data).some(f=>f.id===layout.components&&f.wire===2&&kindOf(f.data)===3))fail('UNSUPPORTED_ENTITY','A static piece carries no components. Make it dynamic: a prefab from scene_add_prefab, or a piece placed with createAtStart false.',{prefab,entity});
     let next=data;
     if(triggers)next=setBlock(next,layout.records,5,()=>triggers);
