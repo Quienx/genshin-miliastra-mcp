@@ -68,12 +68,14 @@ export function listSceneEntities({mapPath,namePrefix='',limit=500}){
     entities:all.slice(0,limit).map(e=>({name:e.name,guid:e.guid,assetId:e.assetId,position:e.position,createdAtStart:e.createdAtStart,kind:isCreature(e.props)?'creature':e.staticUnit?'static':'dynamic'})),
     note:'In a node graph: f.queryEntityByGuid(new guid(GUID)), and f.createEntity(new guid(GUID), [] as bigint[]) for pieces with createdAtStart false. Use this file (or a patched copy) as mapPath for write_graphs so the graph is built on the save that holds these entities.'};
 }
-// Moves placed entities: writes the three floats of the position the list reads (field 6 of kind 1, 11, 1). Rotation and
-// scale are not touched. Several moves of one GUID are refused.
+// Moves placed entities: writes the three floats of the position the list reads (field 6 of kind 1, 11, 1) and, when
+// given, of the scale (11, 3: the editor writes a placed copy's own scale there). Rotation is not touched. Several
+// moves of one GUID are refused.
 export function moveEntities({mapPath,moves,outputName},workspace){
   const file=resolve(mapPath),bytes=fs.readFileSync(file);let root=container(bytes);
   const guids=moves.map(m=>m.guid);if(new Set(guids).size!==guids.length)fail('INVALID_TARGET','A GUID is given twice.',{guids});
-  const at=new Map(moves.map(m=>[m.guid,m.position])),seen=new Set(),noPosition=[];
+  const at=new Map(moves.map(m=>[m.guid,m])),seen=new Set(),noPosition=[];
+  if(moves.some(m=>!m.position&&!m.scale))fail('INVALID_TARGET','A move needs a position or a scale.',{});
   root=replace(root,5,2,Buffer.concat(fields(one(root,5)).map(f=>{
     if(f.id!==1||f.wire!==2)return f.raw;
     const guid=describe(f.data).guid,to=at.get(guid);if(!to)return f.raw;
@@ -81,9 +83,11 @@ export function moveEntities({mapPath,moves,outputName},workspace){
     const data=Buffer.concat(fields(f.data).map(p=>{
       if(p.id!==6||p.wire!==2||kindOf(p.data)!==1||done)return p.raw;
       try{
-        const body=one(p.data,11),pos=one(body,1);
-        const newPos=Buffer.concat([...to.map((v,i)=>field(i+1,5,f32(v))),...fields(pos).filter(x=>x.id>3).map(x=>x.raw)]);
-        done=true;return field(6,2,replace(p.data,11,2,replace(body,1,2,newPos)));
+        let body=one(p.data,11);
+        const xyz=(id,v)=>{const old=fields(body).find(x=>x.id===id&&x.wire===2),data=Buffer.concat([...v.map((n,i)=>field(i+1,5,f32(n))),...(old?fields(old.data).filter(x=>x.id>3).map(x=>x.raw):[])]);body=old?replace(body,id,2,data):Buffer.concat([body,field(id,2,data)]);};
+        if(to.position){one(body,1);xyz(1,to.position);}
+        if(to.scale)xyz(3,to.scale);
+        done=true;return field(6,2,replace(p.data,11,2,body));
       }catch{return p.raw;}
     }));
     if(!done)noPosition.push(guid);return field(1,2,data);
