@@ -218,6 +218,50 @@ export function listPrefabs({mapPath}){
   return {mapPath:file,prefabs:prefabRecords(container(fs.readFileSync(file))).filter(p=>p.kind!=='other'),
     note:'A node graph creates one anywhere with f.createPrefab(prefabId, position, rotation, ownerEntity, false, 1, [] as bigint[]) and finds them with f.getEntitiesWithSpecifiedPrefabOnTheField(prefabId). The entity has the prefab\'s scale. scene_add_prefab makes an object prefab of any asset at any scale.'};
 }
+// Prefab groups (元件组) are prefab entries of asset 10008001 (docs/PLATFORM_RULES.zh-CN.md, 2026-11-27). The entry is
+// {1: id, 2: 10008001, 6: name + constant records with kind 61 {65: members} before kind 62, 7/8/9/10: constant}, and the
+// library lists it in the tab of kind 51 as {1: 101, 2: id}. A member is {1: prefab, 2: position xyz relative to the group
+// centre, 3: rotation xyz in degrees, 5: the prefab again, 6: number from 1}; a zero float is left out, a zero rotation is empty.
+export const GROUP_ASSET=10008001;
+const GROUP_SEED=JSON.parse(fs.readFileSync(new URL('./scene/prefab-group-seed.json',import.meta.url),'utf8'));
+export function groupEntry({prefabId,name,members}){
+  const vec=v=>Buffer.concat(v.map((n,i)=>n?field(i+1,5,f32(n)):Buffer.alloc(0)));
+  const rec=(k,b)=>field(6,2,Buffer.concat([field(1,0,k),b]));
+  const list=members.map((m,i)=>field(1,2,Buffer.concat([field(1,0,m.prefabId),field(2,2,vec(m.position)),field(3,2,vec(m.rotation)),field(5,0,m.prefabId),field(6,0,i+1)])));
+  return Buffer.concat([field(1,0,prefabId),field(2,0,GROUP_ASSET),rec(1,field(11,2,field(1,2,Buffer.from(name,'utf8')))),Buffer.from(GROUP_SEED.head,'hex'),rec(61,field(65,2,Buffer.concat(list))),Buffer.from(GROUP_SEED.tail62,'hex'),Buffer.from(GROUP_SEED.rest,'hex')]);
+}
+const groupDefs=root=>fields(root).filter(f=>f.id===4&&f.wire===2).flatMap(s=>fields(s.data).filter(f=>f.id===1&&f.wire===2)).filter(f=>varintOf(f.data,2)===GROUP_ASSET).map(f=>{
+  const recs=fields(f.data).filter(p=>p.id===6&&p.wire===2),rec=k=>recs.find(p=>kindOf(p.data)===k);
+  const v3=b=>[1,2,3].map(i=>float(b,i));
+  return {prefabId:varintOf(f.data,1),name:one(one(rec(1).data,11),1).toString('utf8'),
+    members:fields(one(rec(61).data,65)).filter(m=>m.id===1).map(m=>({prefabId:varintOf(m.data,1),position:v3(one(m.data,2)),rotation:v3(one(m.data,3))}))};});
+export function listPrefabGroups({mapPath}){
+  const file=resolve(mapPath),root=container(fs.readFileSync(file)),names=new Map(prefabRecords(root).map(p=>[p.prefabId,p.name]));
+  return {mapPath:file,groups:groupDefs(root).map(g=>({...g,members:g.members.map(m=>({...m,prefab:names.get(m.prefabId)??null}))})),
+    note:'A graph creates a group with f.createPrefabGroup(prefabGroupId, position, rotation, ownerEntity, 1, [], false): the first argument is taken to be the prefabId listed here (not verified in play). position is the group centre; members are relative to it.'};
+}
+export function addPrefabGroup({mapPath,name,members,outputName},workspace){
+  const file=resolve(mapPath),bytes=fs.readFileSync(file);let root=container(bytes);
+  if(!Array.isArray(members)||!members.length||members.length>200)fail('INVALID_MEMBERS','members is a list of 1 to 200 {prefab, position, rotation?}.');
+  const existing=prefabRecords(root),sections=fields(root),library=sections.filter(f=>f.id===6&&f.wire===2);
+  if(sections.filter(f=>f.id===4&&f.wire===2).length!==1||library.length!==1)fail('UNSUPPORTED_SAVE','The save does not have the prefab sections this tool knows.');
+  const tabs=fields(library[0].data),tab=tabs.filter(t=>t.id===1&&t.wire===2&&kindOf(t.data)===51);
+  if(tab.length!==1)fail('UNSUPPORTED_SAVE','The save has no library tab for prefab groups (kind 51).');
+  if(existing.some(p=>p.name===name))fail('DUPLICATE_PREFAB_NAME','The save already has a prefab with this name.',{name});
+  const three=(v,label,i)=>{if(!Array.isArray(v)||v.length!==3||!v.every(Number.isFinite))fail('INVALID_MEMBERS',`members[${i}].${label} is [x, y, z].`,{member:i});return v;};
+  const list=members.map((m,i)=>{
+    const hits=existing.filter(p=>p.prefabId===m.prefab||p.name===m.prefab);
+    if(hits.length!==1||hits[0].assetId===GROUP_ASSET)fail('PREFAB_NOT_FOUND',`members[${i}].prefab: ${hits.length?'several prefabs have this name (give the id), or it is a group, which a group cannot hold':'no such prefab'}.`,{member:i,prefab:m.prefab});
+    return {prefabId:hits[0].prefabId,position:three(m.position,'position',i),rotation:three(m.rotation??[0,0,0],'rotation',i)};});
+  let prefabId=Math.max(OBJECT_ID_MIN,...existing.filter(p=>p.prefabId>=OBJECT_ID_MIN&&p.prefabId<=OBJECT_ID_MAX).map(p=>p.prefabId))+1;
+  while(root.includes(varint(prefabId)))prefabId++;
+  if(prefabId>OBJECT_ID_MAX)fail('NO_FREE_ID','No free prefab id.');
+  root=replace(root,4,2,Buffer.concat([one(root,4),field(1,2,groupEntry({prefabId,name,members:list}))]));
+  const newTab=Buffer.concat(fields(tab[0].data).map(f=>f.id===3&&f.wire===2?field(3,2,Buffer.concat([f.data,field(5,2,Buffer.concat([field(1,0,101),field(2,0,prefabId)]))])):f.raw));
+  root=replace(root,6,2,Buffer.concat(tabs.map(t=>t===tab[0]?field(1,2,newTab):t.raw)));
+  const out=output(workspace,file,outputName,'-group');fs.writeFileSync(out,wrap(bytes,root));
+  return {mapPath:out,source:file,prefabId,name,members:list.length,next:'Place it from the editor library (the group tab), or in a graph: f.createPrefabGroup('+prefabId+', position, rotation, ownerEntity, 1, [], false). That the first argument is the prefab id is not verified in play.'};
+}
 // A drop (掉落物) is an object prefab of its own kind: what lies on the ground and is picked up into the backpack. Read
 // from the official sample 掉落物、道具、背包 (禽肉): the entry has {9: 2}, property 38 is {48: {1: 1.0}}, component 7 has
 // {1: 1000.0, 4: 1} and no field 2, there is no record of kind 6, and the drop component (general component 36) says
